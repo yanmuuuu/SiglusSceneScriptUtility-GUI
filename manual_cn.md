@@ -114,7 +114,7 @@ siglus-ssu init
 ## 基本用法
 
 ```
-siglus-ssu [-h] [-V | --version] [--legacy] [--const-profile N] (-lsp | init | -c | -x | -a | -d | -k | -e | -m | -g | -s | -v | -p | -t) [参数]
+siglus-ssu [-h] [-V | --version] [--legacy] [--const-profile N] (-lsp | init | -c | -x | -a | -d | -k | -e | -m | -g | -s | -v | -p | -t | test) [参数]
 ```
 
 ### 全局选项
@@ -245,8 +245,8 @@ siglus-ssu -c --test-shuffle [seed0] <input_dir> <output_pck | output_dir> <test
 | `--charset ENC` | 强制指定源文件编码。接受值：`jis`、`cp932`、`sjis`、`shift_jis`（均等价于 Shift-JIS）或 `utf8`、`utf-8`。省略时自动检测。 |
 | `--no-os` | 跳过 OS（原始 source）嵌入阶段。仍会正常生成并写出 `Scene.pck`，只是包内不再附带原始 source；不影响脚本本身的加密或压缩。 |
 | `--dat-repack` | 不编译 `.ss` 脚本，而是扫描 `input_dir` 中现有的 `.dat` 文件并将它们直接打包成一个 `.pck` 文件。这对于打包已经编译好的脚本非常有用。它只能与 `--no-os` 和/或 `--no-lzss` 组合使用。不能与 `--test-shuffle` 同用。 |
-| `--no-angou` | 禁用 LZSS 压缩和 XOR 加密（`header_size=0`）。可用于调试或无加密的引擎。 |
-| `--no-lzss` | 仅禁用 LZSS 阶段，同时保留脚本原有的加密与头部行为。这对应官方的“easy link”式输出。 |
+| `--no-angou` | 禁用 LZSS 压缩和 XOR 加密（`header_size=0`），并且不嵌入原始 source。可用于调试或无加密的引擎。 |
+| `--no-lzss` | 禁用 LZSS 阶段，同时保留脚本原有的加密与头部行为。此模式不嵌入原始 source chunk，对应官方的“easy link”式输出。 |
 | `--serial` | 禁用多进程并行编译，并强制编译阶段按串行方式运行。默认启用并行编译。 |
 | `--max-workers N` | 最大并行工作进程数。仅在启用并行编译时生效；默认为自动。 |
 | `--lzss-level N` | LZSS 压缩级别，`2`（快，文件大）到 `17`（慢，文件最小）。默认：`17`。 |
@@ -306,9 +306,9 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 
 #### 说明
 
-- **自动编码检测：** 若未指定 `--charset`，工具会扫描 `.ss`、`.inc`、`.ini` 文件中的 UTF-8 BOM 或日文字符。找到则使用 `utf-8`，否则使用 `cp932`（Shift-JIS）。
+- **自动编码检测：** 若未指定 `--charset`，工具会扫描 `.ss`、`.inc`、`.ini`、`.dat` 文件中的 UTF-8 BOM 或假名/CJK 字符。找到则使用 `utf-8`，否则使用 `cp932`（Shift-JIS）。
 - **增量编译：** 当指定 `--tmp` 时，编译器会缓存所有 `.ss` 和 `.inc` 文件的 MD5 哈希。下次运行时仅重编译已更改（或缺少对应 `.dat`）的文件。若任一 `.inc` 文件发生变化，则触发全量重编译。
-- **字符串混淆：** 本工具支持用 MSVC 兼容 `rand()` 种子复现每个 `.dat` 的字符串表位置乱序。翻译工作通常**不需要**复现这一点；`--set-shuffle` 和 `--test-shuffle` 主要用于追求逐字节一致的二进制输出。
+- **字符串混淆：** 编译器会用 MSVC 兼容 `rand()` 种子打乱每个 `.dat` 的字符串表。翻译工作通常**不需要**复现这一点；`--set-shuffle` 和 `--test-shuffle` 主要用于追求逐字节一致的二进制输出。
 
 ---
 
@@ -515,7 +515,7 @@ siglus-ssu -d --a <input_file.dbs> [input_file_2.dbs]
 siglus-ssu -d --c [--type N] [--set-shuffle SEED] <input_csv | input_dir> <output_dbs | output_dir>
 
 # 暴力破解 MSVC rand() 跳过量以匹配参考 .dbs
-siglus-ssu -d --c --test-shuffle [skip0] <expected.dbs> <input.csv> <output.dbs | output_dir>
+siglus-ssu -d --c --test-shuffle [skip0] <expected.dbs> <input_csv> <output_dbs | output_dir>
 ```
 
 #### 参数
@@ -582,7 +582,7 @@ siglus-ssu -d --c --test-shuffle /path/to/original.dbs /path/to/input.csv /path/
 
 扫描 `.pck`、单个场景 `.dat`，或场景 `.dat` 目录树中的编译后场景数据，从反汇编 trace 中读取 KOE 相关调用，将其与 `.ovk` 语音文件条目匹配，并提取对应的 `.ogg` 音频文件。普通模式下，输出会按角色名分类到子目录中。
 
-普通模式下还会生成 `koe_master.csv` 清单，列出所有找到的 KOE 条目及其角色名、对话文本和调用位置。如果同一个 `koe_no` 被多个不同的对话文本引用，CSV 会保留多行，并且只在相同 `koe_no`/文本组合内合并调用位置。若直接扫描 `.pck`，调用位置会写成 `Scene.pck!scene.dat:line`。命令处理完成后还会统计**已引用语音**的总时长；写入 `unreferenced/` 的条目不会计入该总时长。若某个 `.ogg` 的时长读取失败，也不会阻止 CSV 导出，但会计入 `Duration failed` 统计。
+普通模式下还会生成 `koe_master.csv` 清单，列出所有找到的 KOE 条目及其角色名、对话文本和调用位置。如果同一个 `koe_no` 被多个不同的角色/文本组合引用，CSV 会保留多行，并且只在相同 `koe_no`/角色/文本组合内合并调用位置。若直接扫描 `.pck`，调用位置会写成 `Scene.pck!scene.dat:line`。命令处理完成后还会统计**已引用语音**的总时长；写入 `unreferenced/` 的条目不会计入该总时长。若某个 `.ogg` 的时长读取失败，也不会阻止 CSV 导出，但会计入 `Duration failed` 统计。
 
 #### 语法
 
@@ -1113,7 +1113,7 @@ siglus-ssu -s --c /path/to/translated_ogg/ /path/to/owp_out/
 
 提供分析、提取和重新编译 `.omv` 视频文件的工具。`.omv` 格式是带有专有 SiglusEngine 包装头的 Ogg 容器（`.ogv`）。
 
-注意：官方 Siglus 手册将 OMV movie object 定位为“无声的视频对象”，并明确说明它不能播放音频，因此并不适合拿来做带声音的 OP 一类影片。基于这一官方设计，本工具也不支持将带音轨的 `.ogv` 回写为 `.omv`。如果对 `-v --c` 提供的是包含多条 Ogg stream 的文件，例如 Theora + Vorbis/Opus，那么构建 `.omv` 时只会使用 Theora 视频流，内嵌音频流不会被保留。
+`-v --c` 只保留输入 Ogg 文件中的第一条 Theora 视频流。若输入还包含 Vorbis、Opus、字幕或其他 stream，这些 stream 会被忽略，不会写入生成的 `.omv`。
 
 #### 语法
 
@@ -1140,6 +1140,18 @@ siglus-ssu -v --c <input_ogv> <output_omv | output_dir> [--refer ref.omv] [--mod
 | `--flags 0xXXXXXX` | 覆盖 TableB `flags` 的高 24 位。接受单个值或逗号分隔的范围规格，如 `0-9:0x1A2B3C00,10-:0x00000000`。 |
 
 目录输入的 `-v --x` 会递归扫描 `.omv`，并在输出端保留相对目录结构。`-v --c` 在判断第二个参数时遵循这样的规则：若参数是已存在目录、以路径分隔符结尾，或没有扩展名，则按“输出目录”处理；若想明确写到单个文件，请给出带 `.omv` 扩展名的文件路径。
+
+#### 准备 `.ogv` 输入
+
+提供给 `-v --c` 的 `.ogv` 应是只含视频的 Theora stream。若目标引擎要求 `yuv444p`，请显式设置 pixel format；FFmpeg 默认设置可能选择其他格式，例如 `yuv420p`。
+
+请使用包含 `libtheora` 的 FFmpeg build。
+
+```bash
+ffmpeg -i input_video -map 0:v:0 -an -vf "format=yuv444p" -c:v libtheora -q:v 8 output.ogv
+```
+
+`-q:v 8` 只是示例质量设置，可按需要调整。
 
 #### 示例
 
@@ -1349,6 +1361,7 @@ siglus-ssu test /path/to/pck_dir/
 ```
 
 <a id="siglusss-language-spec"></a>
+
 ## SiglusSceneScript语言规范（简称 SiglusSS语言；以 `-c` 编译器为定义）
 
 本节把 `siglus-ssu -c` 当前编译器对 **SiglusSceneScript语言**（简称 **SiglusSS语言**）的接受、拒绝与链接行为，视为该语言的规范定义，而不是“仅供参考的实现说明”。除非另有说明，本节中的“应”“不得”“可以”分别表示强制、禁止、允许。

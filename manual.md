@@ -114,7 +114,7 @@ siglus-ssu init
 ## General Usage
 
 ```
-siglus-ssu [-h] [-V | --version] [--legacy] [--const-profile N] (-lsp | init | -c | -x | -a | -d | -k | -e | -m | -g | -s | -v | -p | -t) [args]
+siglus-ssu [-h] [-V | --version] [--legacy] [--const-profile N] (-lsp | init | -c | -x | -a | -d | -k | -e | -m | -g | -s | -v | -p | -t | test) [args]
 ```
 
 ### Global Options
@@ -246,8 +246,8 @@ siglus-ssu -c --test-shuffle [seed0] <input_dir> <output_pck | output_dir> <test
 | `--charset ENC` | Force source file encoding. Accepted values: `jis`, `cp932`, `sjis`, `shift_jis` (all equivalent to CP932/Shift-JIS), or `utf8`, `utf-8`. If omitted, the encoding is auto-detected. |
 | `--no-os` | Skip the OS (Original Source) embedding stage. The `Scene.pck` is still generated and written out normally, but no original source files are embedded inside it. Does not affect encryption or compression of the scripts themselves. |
 | `--dat-repack` | Instead of compiling `.ss` scripts, scan `input_dir` for existing `.dat` files, copy them, and pack them directly into a `.pck` file. Useful for packing already-compiled scripts. It can only be combined with `--no-os` and/or `--no-lzss`. Cannot be combined with `--test-shuffle`. |
-| `--no-angou` | Disable LZSS compression and XOR encryption. Sets `header_size = 0`. Useful for debugging or for engines without encryption. |
-| `--no-lzss` | Disable only the LZSS stage while keeping the usual script encryption/header behavior. This matches the official "easy link" style output. |
+| `--no-angou` | Disable LZSS compression and XOR encryption. Sets `header_size = 0` and omits original source embedding. Useful for debugging or for engines without encryption. |
+| `--no-lzss` | Disable the LZSS stage while keeping the usual script encryption/header behavior. Original source chunks are not embedded in this mode. This matches the official "easy link" style output. |
 | `--serial` | Disable multi-process parallel compilation and force the compile stage to run serially. Parallel compilation is enabled by default. |
 | `--max-workers N` | Maximum number of parallel worker processes. Only effective while parallel compilation is enabled; defaults to auto. |
 | `--lzss-level N` | LZSS compression level, from `2` (fast, large) to `17` (slow, smallest). Default: `17`. |
@@ -307,9 +307,9 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 
 #### Notes
 
-- **Auto-encoding detection:** If `--charset` is not specified, the utility scans `.ss`, `.inc`, and `.ini` files for a UTF-8 BOM or Japanese characters. If found, `utf-8` is used; otherwise, `cp932` (Shift-JIS) is assumed.
+- **Auto-encoding detection:** If `--charset` is not specified, the utility scans `.ss`, `.inc`, `.ini`, and `.dat` files for a UTF-8 BOM or kana/CJK characters. If found, `utf-8` is used; otherwise, `cp932` (Shift-JIS) is assumed.
 - **Incremental compilation:** When `--tmp` is specified, the compiler caches MD5 hashes of all `.ss` and `.inc` files. On the next run, only files whose hash has changed (or whose `.dat` is missing) are recompiled. If any `.inc` file changes, a full recompile is triggered.
-- **Shuffle seed:** All official game builds shuffle the string table in each `.dat` using an MSVC-compatible `rand()` seed, though some use a seed other than the default `1`. You do not need to match this for normal translation work — the engine reads strings correctly regardless of order. The `--set-shuffle` and `--test-shuffle` options are only needed if you want a byte-for-byte identical binary output.
+- **Shuffle seed:** The compiler shuffles each `.dat` string table with an MSVC-compatible `rand()` seed. You do not need to match this for normal translation work — the engine reads strings correctly regardless of order. The `--set-shuffle` and `--test-shuffle` options are only needed if you want byte-for-byte identical binary output.
 
 ---
 
@@ -516,7 +516,7 @@ siglus-ssu -d --a <input_file.dbs> [input_file_2.dbs]
 siglus-ssu -d --c [--type N] [--set-shuffle SEED] <input_csv | input_dir> <output_dbs | output_dir>
 
 # Brute-force the MSVC rand() skip to match a reference .dbs
-siglus-ssu -d --c --test-shuffle [skip0] <expected.dbs> <input.csv> <output.dbs | output_dir>
+siglus-ssu -d --c --test-shuffle [skip0] <expected.dbs> <input_csv> <output_dbs | output_dir>
 ```
 
 #### Parameters
@@ -583,7 +583,7 @@ Special characters in string values are escaped:
 
 Scans compiled scene data from a `.pck`, a single scene `.dat`, or a directory tree of scene `.dat` files, reads KOE-related calls from disassembly traces, matches them against `.ovk` voice archive entries, and extracts the corresponding `.ogg` audio files. In normal mode, files are grouped into per-character subdirectories.
 
-In normal mode, the command also generates a `koe_master.csv` manifest listing all found KOE entries with their character name, dialogue text, and call-site location. If the same `koe_no` is referenced by multiple distinct dialogue texts, the CSV keeps separate rows and only merges call-sites for the same `koe_no`/text pair. When scanning a `.pck` directly, call-sites are reported as `Scene.pck!scene.dat:line`. After processing, the tool also computes the total duration of **referenced** voice files only; entries written under `unreferenced/` are explicitly excluded from that total. If a particular `.ogg` duration cannot be read, CSV output still succeeds, but that item is counted under `Duration failed`.
+In normal mode, the command also generates a `koe_master.csv` manifest listing all found KOE entries with their character name, dialogue text, and call-site location. If the same `koe_no` is referenced by multiple distinct character/text pairs, the CSV keeps separate rows and only merges call-sites for the same `koe_no`/character/text tuple. When scanning a `.pck` directly, call-sites are reported as `Scene.pck!scene.dat:line`. After processing, the tool also computes the total duration of **referenced** voice files only; entries written under `unreferenced/` are explicitly excluded from that total. If a particular `.ogg` duration cannot be read, CSV output still succeeds, but that item is counted under `Duration failed`.
 
 #### Syntax
 
@@ -607,7 +607,7 @@ siglus-ssu -k [--stats-only] --single KOE_NO <voice_dir> <output_dir>
 ```
 <output_dir>/
   koe_master.csv           — Master manifest of all KOE entries
-  <CharacterName>/         — One subdirectory per character name
+  <CharacterName or unknown>/ — One subdirectory per character name; unknown when no name is inferred
     KOE(000000001).ogg
     KOE(000000002).ogg
     ...
@@ -1104,7 +1104,7 @@ The `--play` option reads the Gameexe BGM table from either `Gameexe.dat` or `Ga
 
 If multiple `#BGM.*` rows point at the same physical file, the player keeps every candidate instead of letting the last row overwrite the others. It first prefers the row whose `#BGM` name matches the current basename exactly, then falls back to the first row for that file.
 
-It accepts `.nwa`, `.owp`, and plain `.ogg` input. `.nwa` files are decoded to temporary `.wav` data before playback. On the first pass it plays from `start` to `end`; after that it loops the `repeat` → `end` sample region indefinitely through **ffplay**. This also supports Gameexe layouts where `start` is later than `repeat`, meaning the intro begins deeper in the file while the loop still restarts from an earlier sample. If `end` is `-1` or extends past the decoded audio length, playback treats EOF as the loop end.
+It accepts `.nwa`, `.owp`, and plain `.ogg` input. `.nwa` files are decoded to temporary `.wav` data before playback. On the first pass it plays from `start` to `end`; after that it loops the `repeat` → `end` sample region indefinitely through **ffplay**. This also supports Gameexe layouts where `start` is later than `repeat`, meaning the intro begins deeper in the file while the loop still restarts from an earlier sample. If `end = -1` or `end` extends past the decoded audio length, playback treats EOF as the loop end.
 
 When the input is a directory, the player builds a playlist from `.nwa`/`.owp`/`.ogg` files with matching `#BGM.*` entries, skips unmatched files with a diagnostic, and opens a full-screen terminal UI. The header shows the current file's full path, the status line reports whether playback is in the first pass, loop section, or paused state, and the bottom line still accepts typed commands.
 
@@ -1118,7 +1118,7 @@ Directory input for `-s --x` also recursively scans subdirectories and preserves
 
 Provides tools for analyzing, extracting, and recompiling `.omv` video files. The `.omv` format is an Ogg container (`.ogv`) with a proprietary SiglusEngine wrapper header.
 
-Note: the official Siglus manual describes OMV movie objects as silent visual objects and explicitly says they cannot play audio, making them unsuitable for OP-style movie playback with embedded sound. In line with that design, this tool does not support writing back audio-bearing `.ogv` inputs. If `-v --c` is given an Ogg file with multiple streams such as Theora + Vorbis/Opus, only the Theora video stream is used when building the `.omv`, and embedded audio streams are not preserved.
+`-v --c` keeps only the first Theora video stream from the input Ogg file. If the input also contains Vorbis, Opus, subtitles, or other streams, those streams are ignored and are not preserved in the generated `.omv`.
 
 #### Syntax
 
@@ -1145,6 +1145,18 @@ siglus-ssu -v --c <input_ogv> <output_omv | output_dir> [--refer ref.omv] [--mod
 | `--flags 0xXXXXXX` | Override the TableB `flags` high 24 bits. Accepts a single value or a comma-separated range spec like `0-9:0x1A2B3C00,10-:0x00000000`. |
 
 Directory input for `-v --x` recursively scans for `.omv` files and preserves the relative directory structure in the output. For `-v --c`, the second argument is interpreted as a directory if it already exists as a directory, ends with a path separator, or has no extension; to write to a specific file, give an explicit `.omv`-extension path.
+
+#### Preparing `.ogv` Inputs
+
+Prepare `.ogv` inputs as video-only Theora streams. For engines that require `yuv444p`, set the pixel format explicitly; FFmpeg defaults may choose another format such as `yuv420p`.
+
+Use an FFmpeg build that includes `libtheora`.
+
+```bash
+ffmpeg -i input_video -map 0:v:0 -an -vf "format=yuv444p" -c:v libtheora -q:v 8 output.ogv
+```
+
+`-q:v 8` is only a sample quality setting; adjust it as needed.
 
 #### Examples
 
@@ -1354,6 +1366,7 @@ siglus-ssu test /path/to/pck_dir/
 ```
 
 <a id="siglusss-language-spec"></a>
+
 ## SiglusSceneScript Language Specification (SiglusSS; as Defined by `-c`)
 
 This section treats the current `siglus-ssu -c` compiler as the normative definition of the **SiglusSceneScript language** (abbreviated **SiglusSS language**), rather than as an implementation note. Unless stated otherwise, “shall”, “shall not”, and “may” are used in their normative sense.
