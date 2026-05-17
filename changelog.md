@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v0.3.2] - 2026-05-17
+
+- Fixed LSP cold workspace scans after package upgrades by flushing standard streams before starting scan worker processes.
+
+
 ## [v0.3.1] - 2026-05-17
 
 - Fixed duplicate buffered output parallel workers started, and added a regression test for flushing standard streams before process-pool startup.

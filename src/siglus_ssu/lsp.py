@@ -3352,6 +3352,9 @@ class SSLanguageServer:
                 self.report_scan_progress(progress)
             return out
         try:
+            from .parallel import _flush_stdio_before_process_pool
+
+            _flush_stdio_before_process_pool()
             with ProcessPoolExecutor(
                 max_workers=worker_count,
                 initializer=_init_scan_worker,
