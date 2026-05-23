@@ -235,6 +235,21 @@ def _normalize_source_text(text: str) -> str:
     return str(text or "").replace("\r", "")
 
 
+def _path_identity(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _overlay_text_for_path(overlays: dict[str, str], path: str) -> str | None:
+    norm = os.path.abspath(path)
+    if norm in overlays:
+        return overlays[norm]
+    key = _path_identity(norm)
+    for overlay_path, text in overlays.items():
+        if _path_identity(overlay_path) == key:
+            return text
+    return None
+
+
 def _decode_text_fallback(raw: bytes) -> str:
     for enc in ("utf-8-sig", "utf-8", "cp932"):
         try:
@@ -249,23 +264,61 @@ def _silent_stdout_call(func: Any, *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
 
 
+def _protocol_stdout_buffer() -> tuple[Any, bool]:
+    out: Any = None
+    try:
+        out = sys.stdout.buffer
+        sys.stdout.flush()
+        fd = os.dup(out.fileno())
+        try:
+            os.set_inheritable(fd, False)
+            return os.fdopen(fd, "wb", buffering=0), True
+        except (OSError, ValueError):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    except (AttributeError, OSError, ValueError):
+        if out is not None:
+            return out, False
+        raise
+
+
+def _silence_process_stdout() -> None:
+    try:
+        sys.stdout.flush()
+        stdout_fd = sys.stdout.buffer.fileno()
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    except (AttributeError, OSError, ValueError):
+        return
+    try:
+        os.dup2(devnull_fd, stdout_fd)
+    finally:
+        try:
+            os.close(devnull_fd)
+        except OSError:
+            pass
+
+
 def _read_text(path: str, overlays: dict[str, str]) -> str:
     norm = os.path.abspath(path)
-    if norm in overlays:
-        return _normalize_source_text(overlays[norm])
+    overlay_text = _overlay_text_for_path(overlays, norm)
+    if overlay_text is not None:
+        return _normalize_source_text(overlay_text)
     try:
         return _normalize_source_text(read_text_auto(norm))
-    except OSError:
+    except (OSError, ValueError):
         try:
             return _decode_text_fallback(Path(norm).read_bytes())
-        except OSError:
+        except (OSError, ValueError):
             return ""
 
 
 def _file_state(path: str) -> tuple[int, int] | None:
     try:
         stat = os.stat(path)
-    except OSError:
+    except (OSError, ValueError):
         return None
     return stat.st_mtime_ns, stat.st_size
 
@@ -273,18 +326,25 @@ def _file_state(path: str) -> tuple[int, int] | None:
 def _sorted_dir_paths(
     root_dir: str, overlays: dict[str, str], suffix: str
 ) -> list[str]:
-    out: set[str] = set()
+    out: dict[str, str] = {}
     root = os.path.abspath(root_dir)
-    if os.path.isdir(root):
-        for name in os.listdir(root):
-            path = os.path.join(root, name)
-            if os.path.isfile(path) and name.lower().endswith(suffix):
-                out.add(os.path.abspath(path))
+    root_key = _path_identity(root)
+    try:
+        if os.path.isdir(root):
+            for name in os.listdir(root):
+                path = os.path.join(root, name)
+                if os.path.isfile(path) and name.lower().endswith(suffix):
+                    norm = os.path.abspath(path)
+                    out[_path_identity(norm)] = norm
+    except (OSError, ValueError):
+        pass
     for path in overlays:
         norm = os.path.abspath(path)
-        if os.path.dirname(norm) == root and norm.lower().endswith(suffix):
-            out.add(norm)
-    return sorted(out, key=lambda p: os.path.basename(p).casefold())
+        if _path_identity(os.path.dirname(norm)) == root_key and norm.lower().endswith(
+            suffix
+        ):
+            out[_path_identity(norm)] = norm
+    return sorted(out.values(), key=lambda p: os.path.basename(p).casefold())
 
 
 def _project_input_signature(
@@ -292,8 +352,9 @@ def _project_input_signature(
 ) -> tuple[Any, ...]:
     signature: list[tuple[Any, ...]] = []
     for path in _sorted_dir_paths(root_dir, overlays, ".inc"):
-        if path in overlays:
-            signature.append((path, "overlay", _normalize_source_text(overlays[path])))
+        overlay_text = _overlay_text_for_path(overlays, path)
+        if overlay_text is not None:
+            signature.append((path, "overlay", _normalize_source_text(overlay_text)))
             continue
         state = _file_state(path)
         if state is None:
@@ -587,6 +648,51 @@ def _lsp_character_to_char(
             return index + 1
         current = next_current
     return len(line_text)
+
+
+def _lsp_position_unit(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, int):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _lsp_position_from_params(params: dict[str, Any]) -> tuple[int, int] | None:
+    raw = (params or {}).get("position")
+    if not isinstance(raw, dict):
+        return None
+    if "line" not in raw or "character" not in raw:
+        return None
+    line = _lsp_position_unit(raw.get("line"))
+    character = _lsp_position_unit(raw.get("character"))
+    if line is None or character is None:
+        return None
+    return line, character
+
+
+def _dict_member(value: dict[str, Any], key: str) -> dict[str, Any]:
+    raw = value.get(key) if isinstance(value, dict) else None
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def _valid_document_uri(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    if "\x00" in value or "%00" in value.casefold():
+        return None
+    return value
+
+
+def _text_document_uri_from_params(params: dict[str, Any]) -> str | None:
+    raw = (params or {}).get("textDocument")
+    if not isinstance(raw, dict):
+        return None
+    return _valid_document_uri(raw.get("uri"))
 
 
 def _line_text_at(text: str, line: int) -> str:
@@ -940,7 +1046,7 @@ def analyze_document(
     if kind == "other":
         return result
     if project.build_error is not None:
-        if os.path.abspath(project.build_error.path) == abs_path:
+        if _path_identity(project.build_error.path) == _path_identity(abs_path):
             result.diagnostics.append(project.build_error)
             return result
         result.diagnostics.append(
@@ -958,7 +1064,7 @@ def analyze_document(
     if kind == "inc":
         for rec in project.definitions.values():
             for item in rec:
-                if os.path.abspath(item.path) == abs_path:
+                if _path_identity(item.path) == _path_identity(abs_path):
                     result.document_symbols.append(item)
         return result
     result = _analyze_ss_document(abs_path, text, project)
@@ -1348,7 +1454,7 @@ def _append_definition_location(
     seen.add(marker)
     text = (
         current_text
-        if current_path and path == os.path.abspath(current_path)
+        if current_path and _path_identity(path) == _path_identity(current_path)
         else (text_for_path(path) if callable(text_for_path) else _read_text(path, {}))
     )
     locations.append(
@@ -1866,7 +1972,7 @@ def _source_uses_utf8(path: str, text: str) -> bool:
     try:
         _disk_text, encoding, _newline = tm.read_text(path)
         return str(encoding or "").lower().startswith("utf-8")
-    except OSError:
+    except (OSError, ValueError):
         pass
     try:
         text.encode("cp932")
@@ -2238,7 +2344,10 @@ def completion_items(
         item = {"label": label, "kind": kind}
         if detail:
             item["detail"] = detail
-        if insert_text is not None:
+        new_text = insert_text if insert_text is not None else label
+        if rng is not None:
+            item["textEdit"] = {"range": rng, "newText": new_text}
+        elif insert_text is not None:
             item["insertText"] = insert_text
         items.append(item)
 
@@ -2512,7 +2621,8 @@ def definition_locations_for_occurrence(
 
 
 TEXT_DOCUMENT_SYNC_FULL = 1
-LSP_INDEX_CACHE_VERSION = 2
+LSP_INDEX_CACHE_VERSION = 5
+DEFAULT_COMPLETION_KIND_VALUE_SET = set(range(1, COMPLETION_KIND_TYPE_PARAMETER + 1))
 
 
 @dataclass(slots=True)
@@ -2545,7 +2655,6 @@ class DirectoryLinkDiagnosticsEntry:
 def _definition_record_to_cache(record: DefinitionRecord) -> dict[str, Any]:
     return {
         "name": record.name,
-        "path": record.path,
         "line": record.line,
         "kind": record.kind,
         "directive": record.directive,
@@ -2555,22 +2664,71 @@ def _definition_record_to_cache(record: DefinitionRecord) -> dict[str, Any]:
     }
 
 
-def _definition_record_from_cache(item: dict[str, Any]) -> DefinitionRecord:
+def _cache_str(item: dict[str, Any], key: str) -> str:
+    value = item.get(key)
+    if not isinstance(value, str):
+        raise ValueError(key)
+    return value
+
+
+def _cache_optional_str(item: dict[str, Any], key: str) -> str | None:
+    value = item.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(key)
+    return value
+
+
+def _cache_int(item: dict[str, Any], key: str) -> int:
+    value = item.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(key)
+    return value
+
+
+def _cache_bool(item: dict[str, Any], key: str) -> bool:
+    value = item.get(key)
+    if not isinstance(value, bool):
+        raise ValueError(key)
+    return value
+
+
+def _cache_file_name(value: Any) -> str:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError("file")
+    if "/" in value or "\\" in value or value in {".", ".."}:
+        raise ValueError("file")
+    return value
+
+
+def _cache_file_name_from_path(path: str) -> str:
+    return _cache_file_name(os.path.basename(os.path.abspath(path)))
+
+
+def _cache_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise ValueError("list")
+    if not all(isinstance(item, dict) for item in value):
+        raise ValueError("list")
+    return value
+
+
+def _definition_record_from_cache(item: dict[str, Any], path: str) -> DefinitionRecord:
     return DefinitionRecord(
-        name=str(item.get("name", "") or ""),
-        path=str(item.get("path", "") or ""),
-        line=int(item.get("line", 1) or 1),
-        kind=str(item.get("kind", "") or ""),
-        directive=str(item.get("directive", "") or ""),
-        detail=str(item.get("detail", "") or ""),
-        scope=str(item.get("scope", "") or ""),
-        signature=str(item.get("signature", "") or ""),
+        name=_cache_str(item, "name"),
+        path=path,
+        line=_cache_int(item, "line"),
+        kind=_cache_str(item, "kind"),
+        directive=_cache_str(item, "directive"),
+        detail=_cache_str(item, "detail"),
+        scope=_cache_str(item, "scope"),
+        signature=_cache_str(item, "signature"),
     )
 
 
 def _source_diagnostic_to_cache(diagnostic: SourceDiagnostic) -> dict[str, Any]:
     return {
-        "path": diagnostic.path,
         "line": diagnostic.line,
         "message": diagnostic.message,
         "severity": diagnostic.severity,
@@ -2578,21 +2736,20 @@ def _source_diagnostic_to_cache(diagnostic: SourceDiagnostic) -> dict[str, Any]:
     }
 
 
-def _source_diagnostic_from_cache(item: dict[str, Any]) -> SourceDiagnostic:
-    code = item.get("code")
+def _source_diagnostic_from_cache(item: dict[str, Any], path: str) -> SourceDiagnostic:
+    code = _cache_optional_str(item, "code")
     return SourceDiagnostic(
-        path=str(item.get("path", "") or ""),
-        line=int(item.get("line", 1) or 1),
-        message=str(item.get("message", "") or ""),
-        severity=int(item.get("severity", SEVERITY_ERROR) or SEVERITY_ERROR),
-        code=None if code is None else str(code),
+        path=path,
+        line=_cache_int(item, "line"),
+        message=_cache_str(item, "message"),
+        severity=_cache_int(item, "severity"),
+        code=code,
     )
 
 
 def _symbol_occurrence_to_cache(occurrence: SymbolOccurrence) -> dict[str, Any]:
     return {
         "symbol_id": occurrence.symbol_id,
-        "path": occurrence.path,
         "line": occurrence.line,
         "start_char": occurrence.start_char,
         "end_char": occurrence.end_char,
@@ -2604,18 +2761,18 @@ def _symbol_occurrence_to_cache(occurrence: SymbolOccurrence) -> dict[str, Any]:
     }
 
 
-def _symbol_occurrence_from_cache(item: dict[str, Any]) -> SymbolOccurrence:
+def _symbol_occurrence_from_cache(item: dict[str, Any], path: str) -> SymbolOccurrence:
     return SymbolOccurrence(
-        symbol_id=str(item.get("symbol_id", "") or ""),
-        path=str(item.get("path", "") or ""),
-        line=int(item.get("line", 0) or 0),
-        start_char=int(item.get("start_char", 0) or 0),
-        end_char=int(item.get("end_char", 0) or 0),
-        kind=str(item.get("kind", "") or ""),
-        semantic_type=str(item.get("semantic_type", "") or ""),
-        name=str(item.get("name", "") or ""),
-        definition=bool(item.get("definition", False)),
-        renamable=bool(item.get("renamable", False)),
+        symbol_id=_cache_str(item, "symbol_id"),
+        path=path,
+        line=_cache_int(item, "line"),
+        start_char=_cache_int(item, "start_char"),
+        end_char=_cache_int(item, "end_char"),
+        kind=_cache_str(item, "kind"),
+        semantic_type=_cache_str(item, "semantic_type"),
+        name=_cache_str(item, "name"),
+        definition=_cache_bool(item, "definition"),
+        renamable=_cache_bool(item, "renamable"),
     )
 
 
@@ -2633,8 +2790,32 @@ def _lsp_index_cache_root() -> str:
     return os.path.join(os.path.expanduser("~"), ".cache", "siglus_ssu", "lsp-index")
 
 
-def _lsp_index_cache_path(directory: str) -> str:
-    key_src = os.path.normcase(os.path.abspath(directory or "."))
+def _lsp_index_directory_signature(directory: str) -> str:
+    key_src = _path_identity(directory or ".")
+    return hashlib.sha1(key_src.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _lsp_index_cache_key(
+    directory: str,
+    inputs: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    return {
+        "version": LSP_INDEX_CACHE_VERSION,
+        "package": str(package_version() or ""),
+        "const": _lsp_index_const_signature(),
+        "directory": _lsp_index_directory_signature(directory),
+        "inc": dict(inputs.get("inc", {})),
+        "ss": sorted(inputs.get("ss", {})),
+    }
+
+
+def _lsp_index_cache_path(directory: str, inputs: dict[str, dict[str, str]]) -> str:
+    key_src = json.dumps(
+        _lsp_index_cache_key(directory, inputs),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     key = hashlib.sha1(key_src.encode("utf-8", "surrogatepass")).hexdigest()
     return os.path.join(_lsp_index_cache_root(), key + ".json")
 
@@ -2668,27 +2849,34 @@ def _lsp_index_cache_inputs(directory: str) -> dict[str, dict[str, str]] | None:
         for key, paths in groups:
             for path in paths:
                 inputs[key][os.path.basename(path)] = _md5_file(path)
-    except OSError:
+    except (OSError, ValueError):
         return None
     return inputs
 
 
-def _read_lsp_index_cache_header(directory: str) -> dict[str, Any] | None:
+def _read_lsp_index_cache_header(
+    directory: str,
+    inputs: dict[str, dict[str, str]],
+) -> dict[str, Any] | None:
     try:
-        data = json.loads(Path(_lsp_index_cache_path(directory)).read_text("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        data = json.loads(
+            Path(_lsp_index_cache_path(directory, inputs)).read_text("utf-8")
+        )
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):
         return None
-    try:
-        version = int(data.get("version", 0) or 0)
-    except (TypeError, ValueError):
+    version = data.get("version")
+    if isinstance(version, bool) or not isinstance(version, int):
         return None
     if version != LSP_INDEX_CACHE_VERSION:
         return None
-    if str(data.get("package", "") or "") != str(package_version() or ""):
+    package = data.get("package")
+    if not isinstance(package, str) or package != str(package_version() or ""):
         return None
     if data.get("const") != _lsp_index_const_signature():
+        return None
+    if data.get("cache") != _lsp_index_cache_key(directory, inputs):
         return None
     return data
 
@@ -2698,56 +2886,45 @@ def _normalize_lsp_cache_inputs(value: Any) -> dict[str, dict[str, str]] | None:
         return None
     out: dict[str, dict[str, str]] = {"inc": {}, "ss": {}}
     for group in ("inc", "ss"):
-        raw = value.get(group) or {}
+        if group not in value:
+            return None
+        raw = value.get(group)
         if not isinstance(raw, dict):
             return None
         for name, digest in raw.items():
-            key = str(name or "")
-            if key:
-                out[group][key] = str(digest or "")
+            try:
+                cache_name = _cache_file_name(name)
+            except ValueError:
+                return None
+            if not isinstance(digest, str):
+                return None
+            if re.fullmatch(r"[0-9a-f]{32}", digest) is None:
+                return None
+            out[group][cache_name] = digest
     return out
 
 
-def _lsp_cache_section_inputs(
-    data: dict[str, Any], payload: dict[str, Any]
-) -> dict[str, dict[str, str]] | None:
-    return _normalize_lsp_cache_inputs(
-        payload.get("inputs")
-    ) or _normalize_lsp_cache_inputs(data.get("inputs"))
-
-
-def _casefold_input_maps(
-    inputs: dict[str, dict[str, str]],
-) -> dict[str, dict[str, str]]:
-    return {
-        group: {
-            os.path.normcase(str(name)): str(digest or "")
-            for name, digest in (inputs.get(group) or {}).items()
-        }
-        for group in ("inc", "ss")
-    }
-
-
-def _cache_path_unchanged_in_maps(
-    old_maps: dict[str, dict[str, str]],
-    current_maps: dict[str, dict[str, str]],
-    path: str,
+def _cache_file_unchanged_in_inputs(
+    old_inputs: dict[str, dict[str, str]],
+    current_inputs: dict[str, dict[str, str]],
+    name: str,
 ) -> bool:
-    lower = path.lower()
+    lower = name.lower()
     if lower.endswith(".inc"):
         group = "inc"
     elif lower.endswith(".ss"):
         group = "ss"
     else:
         return False
-    name = os.path.normcase(os.path.basename(path))
-    old_digest = old_maps.get(group, {}).get(name)
-    current_digest = current_maps.get(group, {}).get(name)
+    old_digest = old_inputs.get(group, {}).get(name)
+    current_digest = current_inputs.get(group, {}).get(name)
     return bool(old_digest) and old_digest == current_digest
 
 
-def _write_lsp_index_cache(directory: str, data: dict[str, Any]) -> None:
-    path = _lsp_index_cache_path(directory)
+def _write_lsp_index_cache(
+    directory: str, inputs: dict[str, dict[str, str]], data: dict[str, Any]
+) -> None:
+    path = _lsp_index_cache_path(directory, inputs)
     tmp_path = path + f".{os.getpid()}.tmp"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2756,10 +2933,10 @@ def _write_lsp_index_cache(directory: str, data: dict[str, Any]) -> None:
                 data, f, ensure_ascii=False, sort_keys=True, separators=(",", ":")
             )
         os.replace(tmp_path, path)
-    except OSError:
+    except (OSError, ValueError):
         try:
             os.remove(tmp_path)
-        except OSError:
+        except (OSError, ValueError):
             pass
 
 
@@ -2769,17 +2946,16 @@ def _update_lsp_index_cache(
     section: str,
     payload: dict[str, Any],
 ) -> None:
-    data = _read_lsp_index_cache_header(directory)
+    data = _read_lsp_index_cache_header(directory, inputs)
     if data is None:
         data = {
             "version": LSP_INDEX_CACHE_VERSION,
             "package": str(package_version() or ""),
             "const": _lsp_index_const_signature(),
-            "directory": os.path.abspath(directory or "."),
+            "cache": _lsp_index_cache_key(directory, inputs),
         }
-    data["inputs"] = inputs
     data[section] = payload
-    _write_lsp_index_cache(directory, data)
+    _write_lsp_index_cache(directory, inputs, data)
 
 
 @dataclass(slots=True)
@@ -2793,7 +2969,9 @@ class ScanProgressState:
 class SSLanguageServer:
     def __init__(self, *, serial: bool = False) -> None:
         self._stdin = sys.stdin.buffer
-        self._stdout = sys.stdout.buffer
+        self._stdout, detached_stdout = _protocol_stdout_buffer()
+        if detached_stdout:
+            _silence_process_stdout()
         self._stdin_fd = self._stdin.fileno()
         self._input_buffer = bytearray()
         self.deferred_messages: list[dict[str, Any]] = []
@@ -2801,16 +2979,17 @@ class SSLanguageServer:
         self.project_cache: dict[str, ProjectCacheEntry] = {}
         self.link_diagnostics_cache: dict[str, DirectoryLinkDiagnosticsEntry] = {}
         self.initialize_seen = False
-        self.initialized = False
         self.shutdown_requested = False
         self.serial = bool(serial)
         self.client_capabilities: dict[str, Any] = {}
         self.position_encoding = POSITION_ENCODING_UTF16
-        self.completion_kind_value_set = set(range(1, COMPLETION_KIND_REFERENCE + 1))
+        self.completion_kind_value_set = set(DEFAULT_COMPLETION_KIND_VALUE_SET)
         self.pull_diagnostics_enabled = False
         self.pending_request_ids: set[Any] = set()
+        self.pending_request_progress_tokens: dict[Any, Any] = {}
         self.active_request_ids: set[Any] = set()
         self.cancelled_request_ids: set[Any] = set()
+        self.cancelled_progress_tokens: set[Any] = set()
         self.current_request_id: Any = None
         self.current_work_done_token: Any = None
         self.current_work_done_started = False
@@ -2875,15 +3054,15 @@ class SSLanguageServer:
             raise LSPMessageError(
                 JSONRPC_INVALID_REQUEST, "Content-Length must be positive."
             )
-        charset = _content_type_charset(headers.get("content-type", ""))
-        if charset and charset not in {"utf-8", "utf8"}:
-            del self._input_buffer[:header_size]
-            raise LSPMessageError(
-                JSONRPC_INVALID_REQUEST, "Unsupported Content-Type charset."
-            )
         message_size = header_size + length
         if len(self._input_buffer) < message_size:
             return None
+        charset = _content_type_charset(headers.get("content-type", ""))
+        if charset and charset not in {"utf-8", "utf8"}:
+            del self._input_buffer[:message_size]
+            raise LSPMessageError(
+                JSONRPC_INVALID_REQUEST, "Unsupported Content-Type charset."
+            )
         payload = bytes(self._input_buffer[header_size:message_size])
         del self._input_buffer[:message_size]
         try:
@@ -2931,17 +3110,29 @@ class SSLanguageServer:
     def message_request_key(self, message: dict[str, Any]) -> Any | None:
         if "id" not in message:
             return None
+        if not isinstance(message.get("method"), str):
+            return None
         return self.request_id_key(message.get("id"))
+
+    def message_progress_token(self, message: dict[str, Any]) -> Any | None:
+        params = message.get("params")
+        return self.progress_token_from_params(
+            params if isinstance(params, dict) else {}
+        )
 
     def track_pending_request(self, message: dict[str, Any]) -> None:
         key = self.message_request_key(message)
         if key is not None:
             self.pending_request_ids.add(key)
+            token = self.message_progress_token(message)
+            if token is not None:
+                self.pending_request_progress_tokens[key] = token
 
     def finish_message_request(self, message: dict[str, Any]) -> None:
         key = self.message_request_key(message)
         if key is not None:
             self.pending_request_ids.discard(key)
+            self.pending_request_progress_tokens.pop(key, None)
             if key not in self.active_request_ids:
                 self.cancelled_request_ids.discard(key)
 
@@ -2966,6 +3157,15 @@ class SSLanguageServer:
                 if message.get("method") == "$/cancelRequest" and "id" not in message:
                     params = message.get("params")
                     self.handle_cancel_request(
+                        params if isinstance(params, dict) else {}
+                    )
+                    continue
+                if (
+                    message.get("method") == "window/workDoneProgress/cancel"
+                    and "id" not in message
+                ):
+                    params = message.get("params")
+                    self.handle_progress_cancel(
                         params if isinstance(params, dict) else {}
                     )
                     continue
@@ -2996,6 +3196,34 @@ class SSLanguageServer:
             )
         return None
 
+    def position_from_params(
+        self, msg_id: Any, params: dict[str, Any]
+    ) -> tuple[int, int] | None:
+        position = _lsp_position_from_params(params)
+        if position is None:
+            self.respond(
+                msg_id,
+                error={
+                    "code": JSONRPC_INVALID_PARAMS,
+                    "message": "Request position must contain non-negative line and character.",
+                },
+            )
+        return position
+
+    def text_document_uri_from_params(
+        self, msg_id: Any, params: dict[str, Any]
+    ) -> str | None:
+        uri = _text_document_uri_from_params(params)
+        if uri is None:
+            self.respond(
+                msg_id,
+                error={
+                    "code": JSONRPC_INVALID_PARAMS,
+                    "message": "Request textDocument.uri must be a non-empty string.",
+                },
+            )
+        return uri
+
     def progress_token_from_params(self, params: dict[str, Any]) -> Any | None:
         token = params.get("workDoneToken") if isinstance(params, dict) else None
         if isinstance(token, bool):
@@ -3012,9 +3240,24 @@ class SSLanguageServer:
         ):
             self.cancelled_request_ids.add(key)
 
+    def handle_progress_cancel(self, params: dict[str, Any]) -> None:
+        token = params.get("token") if isinstance(params, dict) else None
+        if isinstance(token, bool):
+            return
+        if not isinstance(token, (int, str)):
+            return
+        if (
+            token == self.current_work_done_token
+            or token in self.pending_request_progress_tokens.values()
+        ):
+            self.cancelled_progress_tokens.add(token)
+
     def current_request_cancelled(self) -> bool:
         key = self.request_id_key(self.current_request_id)
-        return key is not None and key in self.cancelled_request_ids
+        if key is not None and key in self.cancelled_request_ids:
+            return True
+        token = self.current_work_done_token
+        return token is not None and token in self.cancelled_progress_tokens
 
     def raise_if_request_cancelled(self) -> None:
         if self.current_request_id is not None and not self.draining_control_messages:
@@ -3071,14 +3314,7 @@ class SSLanguageServer:
         if token is None:
             return
         if not self.current_work_done_started:
-            self.send_progress(
-                token,
-                {
-                    "kind": "begin",
-                    "title": "SiglusSS",
-                    "cancellable": True,
-                },
-            )
+            return
         if not self.current_work_done_finished:
             self.send_progress(token, {"kind": "end"})
 
@@ -3113,6 +3349,13 @@ class SSLanguageServer:
     def respond(
         self, msg_id: Any, result: Any = None, error: dict[str, Any] | None = None
     ) -> None:
+        if (
+            msg_id == self.current_request_id
+            and self.current_work_done_token is not None
+            and self.current_work_done_started
+            and not self.current_work_done_finished
+        ):
+            self.send_progress(self.current_work_done_token, {"kind": "end"})
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": msg_id}
         if error is not None:
             payload["error"] = error
@@ -3176,9 +3419,10 @@ class SSLanguageServer:
     ) -> dict[str, str]:
         out: dict[str, str] = {}
         directory = os.path.abspath(directory)
+        directory_key = _path_identity(directory)
         for doc in self.documents.values():
             path = os.path.abspath(doc.path)
-            if os.path.dirname(path) != directory:
+            if _path_identity(os.path.dirname(path)) != directory_key:
                 continue
             if suffix is not None and not path.lower().endswith(suffix):
                 continue
@@ -3214,20 +3458,44 @@ class SSLanguageServer:
             return ("missing",)
         return ("file", state)
 
+    def sync_document_from_disk(self, doc: DocumentState) -> tuple[Any, ...]:
+        old_signature = self.document_source_signature(doc)
+        state = _file_state(doc.path)
+        if state is None:
+            doc.file_state = None
+            doc.disk_text = ""
+            doc.text = ""
+        else:
+            text = _read_text(doc.path, {})
+            doc.file_state = state
+            doc.disk_text = text
+            doc.text = text
+        doc.overlay_active = False
+        return old_signature
+
+    def persistent_cache_file_usable(self, path: str) -> bool:
+        doc = self.document_for_path(path)
+        if doc is None:
+            return True
+        if doc.overlay_active:
+            return False
+        if doc.opened and doc.file_state != _file_state(doc.path):
+            return False
+        return True
+
     def persistent_index_inputs(
         self, directory: str
     ) -> dict[str, dict[str, str]] | None:
         directory = os.path.abspath(directory or ".")
+        directory_key = _path_identity(directory)
         for doc in self.documents.values():
             path = os.path.abspath(doc.path)
             lower = path.lower()
-            if os.path.dirname(path) != directory:
+            if _path_identity(os.path.dirname(path)) != directory_key:
                 continue
-            if not lower.endswith((".inc", ".ss")):
+            if not lower.endswith(".inc"):
                 continue
-            if doc.overlay_active:
-                return None
-            if doc.opened and doc.file_state != _file_state(doc.path):
+            if not self.persistent_cache_file_usable(path):
                 return None
         return _lsp_index_cache_inputs(directory)
 
@@ -3240,26 +3508,29 @@ class SSLanguageServer:
         inputs = self.persistent_index_inputs(directory)
         if inputs is None:
             return None
-        data = _read_lsp_index_cache_header(directory)
+        data = _read_lsp_index_cache_header(directory, inputs)
         if data is None:
             return None
         payload = data.get("link")
         if not isinstance(payload, dict):
             return None
-        payload_inputs = _lsp_cache_section_inputs(data, payload)
+        payload_inputs = _normalize_lsp_cache_inputs(payload.get("inputs"))
         if payload_inputs is None:
             return None
-        payload_input_maps = _casefold_input_maps(payload_inputs)
-        current_input_maps = _casefold_input_maps(inputs)
-        if payload_input_maps["inc"] != current_input_maps["inc"]:
+        if payload_inputs["inc"] != inputs["inc"]:
             return None
         ordered_paths = [os.path.abspath(path) for path in paths]
-        current_paths = set(ordered_paths)
+        current_path_by_name: dict[str, str] = {}
+        for path in ordered_paths:
+            name = _cache_file_name_from_path(path)
+            if name in current_path_by_name:
+                return None
+            current_path_by_name[name] = path
         try:
-            raw_commands = payload.get("file_commands") or {}
-            raw_has_diagnostics = payload.get("file_has_diagnostics") or {}
-            raw_occurrences = payload.get("file_occurrences") or {}
-            raw_diagnostics = payload.get("diagnostics") or {}
+            raw_commands = payload.get("file_commands")
+            raw_has_diagnostics = payload.get("file_has_diagnostics")
+            raw_occurrences = payload.get("file_occurrences")
+            raw_diagnostics = payload.get("diagnostics")
             if not (
                 isinstance(raw_commands, dict)
                 and isinstance(raw_has_diagnostics, dict)
@@ -3267,65 +3538,62 @@ class SSLanguageServer:
                 and isinstance(raw_diagnostics, dict)
             ):
                 return None
-            raw_commands_by_path = {
-                os.path.abspath(str(path)): items
-                for path, items in raw_commands.items()
-                if str(path)
-            }
-            raw_has_diagnostics_by_path = {
-                os.path.abspath(str(path)): value
-                for path, value in raw_has_diagnostics.items()
-                if str(path)
-            }
-            raw_occurrences_by_path = {
-                os.path.abspath(str(path)): items
-                for path, items in raw_occurrences.items()
-                if str(path)
-            }
-            cached_paths = [
-                os.path.abspath(str(path))
-                for path in (payload.get("paths") or [])
-                if str(path)
-            ]
-            if not cached_paths:
-                cached_paths = sorted(
-                    set(raw_commands_by_path)
-                    | set(raw_has_diagnostics_by_path)
-                    | set(raw_occurrences_by_path),
-                    key=lambda path: os.path.basename(path).casefold(),
-                )
+            raw_commands_by_name: dict[str, list[dict[str, Any]]] = {}
+            for name, items in raw_commands.items():
+                name = _cache_file_name(name)
+                if name in raw_commands_by_name:
+                    return None
+                raw_commands_by_name[name] = _cache_dict_list(items)
+            raw_has_diagnostics_by_name: dict[str, bool] = {}
+            for name, value in raw_has_diagnostics.items():
+                if not isinstance(value, bool):
+                    return None
+                name = _cache_file_name(name)
+                if name in raw_has_diagnostics_by_name:
+                    return None
+                raw_has_diagnostics_by_name[name] = value
+            raw_occurrences_by_name: dict[str, list[dict[str, Any]]] = {}
+            for name, items in raw_occurrences.items():
+                name = _cache_file_name(name)
+                if name in raw_occurrences_by_name:
+                    return None
+                raw_occurrences_by_name[name] = _cache_dict_list(items)
+            raw_paths = payload.get("paths")
+            if not isinstance(raw_paths, list):
+                return None
+            cached_names = [_cache_file_name(name) for name in raw_paths]
+            if len(set(cached_names)) != len(cached_names):
+                return None
             file_commands: dict[str, list[DefinitionRecord]] = {}
             file_has_diagnostics: dict[str, bool] = {}
             file_occurrences: dict[str, list[SymbolOccurrence]] = {}
             diagnostics: dict[str, list[SourceDiagnostic]] = {}
             file_signatures: dict[str, tuple[Any, ...]] = {}
-            for path in cached_paths:
-                if path not in current_paths:
-                    file_signatures[path] = ("missing",)
+            for name in cached_names:
+                path = current_path_by_name.get(name)
+                if path is None:
                     continue
-                if not _cache_path_unchanged_in_maps(
-                    payload_input_maps, current_input_maps, path
-                ):
+                if not self.persistent_cache_file_usable(path):
+                    continue
+                if not _cache_file_unchanged_in_inputs(payload_inputs, inputs, name):
                     continue
                 if (
-                    path not in raw_commands_by_path
-                    or path not in raw_has_diagnostics_by_path
-                    or path not in raw_occurrences_by_path
+                    name not in raw_commands_by_name
+                    or name not in raw_has_diagnostics_by_name
+                    or name not in raw_occurrences_by_name
                 ):
                     continue
-                file_commands[path] = [
-                    _definition_record_from_cache(item)
-                    for item in raw_commands_by_path.get(path, [])
-                    if isinstance(item, dict)
+                commands = [
+                    _definition_record_from_cache(item, path)
+                    for item in raw_commands_by_name[name]
                 ]
-                file_has_diagnostics[path] = bool(
-                    raw_has_diagnostics_by_path.get(path, False)
-                )
-                file_occurrences[path] = [
-                    _symbol_occurrence_from_cache(item)
-                    for item in raw_occurrences_by_path.get(path, [])
-                    if isinstance(item, dict)
+                file_commands[path] = commands
+                file_has_diagnostics[path] = raw_has_diagnostics_by_name[name]
+                occurrences_for_path = [
+                    _symbol_occurrence_from_cache(item, path)
+                    for item in raw_occurrences_by_name[name]
                 ]
+                file_occurrences[path] = occurrences_for_path
                 file_signatures[path] = self.path_source_signature(path)
             occurrences: dict[str, list[SymbolOccurrence]] = {}
             for path in ordered_paths:
@@ -3340,13 +3608,19 @@ class SSLanguageServer:
                         item.end_char,
                     )
                 )
-            for path, items in raw_diagnostics.items():
-                norm = os.path.abspath(str(path))
-                diagnostics[norm] = [
-                    _source_diagnostic_from_cache(item)
-                    for item in items
-                    if isinstance(item, dict)
+            for name, items in raw_diagnostics.items():
+                name = _cache_file_name(name)
+                path = current_path_by_name.get(name)
+                if path is None:
+                    continue
+                items = _cache_dict_list(items)
+                diagnostics_for_path = [
+                    _source_diagnostic_from_cache(item, path) for item in items
                 ]
+                diagnostics[path] = diagnostics_for_path
+            revision = payload.get("revision")
+            if isinstance(revision, bool) or not isinstance(revision, int):
+                return None
             return DirectoryLinkDiagnosticsEntry(
                 project_signature=project_entry.signature,
                 file_signatures=file_signatures,
@@ -3355,7 +3629,7 @@ class SSLanguageServer:
                 file_occurrences=file_occurrences,
                 occurrences=occurrences,
                 diagnostics=diagnostics,
-                revision=int(payload.get("revision", 0) or 0),
+                revision=revision,
             )
         except (TypeError, ValueError):
             return None
@@ -3370,30 +3644,38 @@ class SSLanguageServer:
         if inputs is None:
             return
         paths = [os.path.abspath(path) for path in paths]
+        if any(
+            path.lower().endswith(".ss") and not self.persistent_cache_file_usable(path)
+            for path in paths
+        ):
+            return
+        name_by_path = {
+            os.path.abspath(path): _cache_file_name_from_path(path) for path in paths
+        }
         payload = {
             "inputs": inputs,
-            "paths": paths,
+            "paths": [name_by_path[path] for path in paths],
             "revision": entry.revision,
             "file_commands": {
-                path: [
+                name_by_path[path]: [
                     _definition_record_to_cache(record)
                     for record in entry.file_commands.get(path, [])
                 ]
                 for path in paths
             },
             "file_has_diagnostics": {
-                path: bool(entry.file_has_diagnostics.get(path, False))
+                name_by_path[path]: bool(entry.file_has_diagnostics.get(path, False))
                 for path in paths
             },
             "file_occurrences": {
-                path: [
+                name_by_path[path]: [
                     _symbol_occurrence_to_cache(occurrence)
                     for occurrence in entry.file_occurrences.get(path, [])
                 ]
                 for path in paths
             },
             "diagnostics": {
-                os.path.abspath(path): [
+                _cache_file_name_from_path(path): [
                     _source_diagnostic_to_cache(diagnostic)
                     for diagnostic in diagnostics
                 ]
@@ -3515,10 +3797,10 @@ class SSLanguageServer:
                 diagnostics={},
             )
         assert entry is not None
-        current_paths = set(paths)
+        current_path_keys = {_path_identity(path) for path in paths}
         removed = False
         for path in list(entry.file_signatures):
-            if path in current_paths:
+            if _path_identity(path) in current_path_keys:
                 continue
             entry.file_signatures.pop(path, None)
             entry.file_commands.pop(path, None)
@@ -3729,7 +4011,7 @@ class SSLanguageServer:
             doc
             for doc in self.documents.values()
             if doc.opened
-            and os.path.dirname(doc.path) == directory
+            and _path_identity(os.path.dirname(doc.path)) == _path_identity(directory)
             and doc.uri != skip_uri
         ]
         docs.sort(key=lambda d: (os.path.basename(d.path).casefold(), d.uri))
@@ -3773,34 +4055,34 @@ class SSLanguageServer:
         return locations
 
     def pick_position_encoding(self, capabilities: dict[str, Any]) -> str:
-        raw = (capabilities.get("general") or {}).get("positionEncodings") or []
+        raw = _dict_member(capabilities, "general").get("positionEncodings") or []
         if isinstance(raw, list):
             for item in raw:
-                encoding = str(item or "")
+                if not isinstance(item, str):
+                    continue
+                encoding = item
                 if encoding in SUPPORTED_POSITION_ENCODINGS:
                     return encoding
         return POSITION_ENCODING_UTF16
 
     def update_completion_kind_value_set(self, capabilities: dict[str, Any]) -> None:
-        raw = (
-            ((capabilities.get("textDocument") or {}).get("completion") or {}).get(
-                "completionItemKind"
-            )
-            or {}
-        ).get("valueSet")
+        text_document = _dict_member(capabilities, "textDocument")
+        completion = _dict_member(text_document, "completion")
+        completion_item_kind = _dict_member(completion, "completionItemKind")
+        raw = completion_item_kind.get("valueSet")
         if not isinstance(raw, list) or not raw:
-            self.completion_kind_value_set = set(
-                range(1, COMPLETION_KIND_REFERENCE + 1)
-            )
+            self.completion_kind_value_set = set(DEFAULT_COMPLETION_KIND_VALUE_SET)
             return
         values: set[int] = set()
         for item in raw:
-            try:
-                values.add(int(item))
-            except (TypeError, ValueError):
+            if isinstance(item, bool):
                 continue
+            if not isinstance(item, int):
+                continue
+            if 1 <= item <= COMPLETION_KIND_TYPE_PARAMETER:
+                values.add(item)
         self.completion_kind_value_set = values or set(
-            range(1, COMPLETION_KIND_REFERENCE + 1)
+            DEFAULT_COMPLETION_KIND_VALUE_SET
         )
 
     def completion_kind(
@@ -3833,22 +4115,17 @@ class SSLanguageServer:
         return items
 
     def client_supports_work_done_progress(self) -> bool:
-        return bool(
-            ((self.client_capabilities.get("window") or {}).get("workDoneProgress"))
+        return (
+            _dict_member(self.client_capabilities, "window").get("workDoneProgress")
+            is True
         )
 
     def client_supports_prepare_rename(self) -> bool:
-        return bool(
-            (
-                (
-                    (self.client_capabilities.get("textDocument") or {}).get("rename")
-                    or {}
-                ).get("prepareSupport", False)
-            )
-        )
+        text_document = _dict_member(self.client_capabilities, "textDocument")
+        return _dict_member(text_document, "rename").get("prepareSupport") is True
 
     def client_supports_pull_diagnostics(self) -> bool:
-        raw = (self.client_capabilities.get("textDocument") or {}).get("diagnostic")
+        raw = _dict_member(self.client_capabilities, "textDocument").get("diagnostic")
         return isinstance(raw, dict)
 
     def handle_initialize(self, msg_id: Any, params: dict[str, Any]) -> None:
@@ -3912,11 +4189,16 @@ class SSLanguageServer:
         self.respond(msg_id, result=result)
 
     def handle_did_open(self, params: dict[str, Any]) -> None:
-        item = (params or {}).get("textDocument") or {}
-        uri = str(item.get("uri") or "")
-        if not uri:
+        item = (params or {}).get("textDocument")
+        if not isinstance(item, dict):
             return
-        text = _normalize_source_text(item.get("text") or "")
+        uri = _valid_document_uri(item.get("uri"))
+        if uri is None:
+            return
+        raw_text = item.get("text")
+        if not isinstance(raw_text, str):
+            return
+        text = _normalize_source_text(raw_text)
         path = uri_to_path(uri)
         key = document_key_for_uri(uri)
         doc = self.get_or_load_document(uri)
@@ -3959,16 +4241,23 @@ class SSLanguageServer:
                 )
 
     def handle_did_change(self, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = _text_document_uri_from_params(params)
+        if uri is None:
+            return
         doc = self.document_for_uri(uri)
         if doc is None:
             return
         changes = (params or {}).get("contentChanges") or []
-        if not changes:
+        if not isinstance(changes, list) or not changes:
+            return
+        last_change = changes[-1]
+        if not isinstance(last_change, dict):
+            return
+        raw_text = last_change.get("text")
+        if not isinstance(raw_text, str):
             return
         old_signature = self.document_source_signature(doc)
-        text = _normalize_source_text(changes[-1].get("text") or "")
+        text = _normalize_source_text(raw_text)
         if text == doc.disk_text:
             doc.text = doc.disk_text
             doc.overlay_active = False
@@ -3994,17 +4283,23 @@ class SSLanguageServer:
                 )
 
     def handle_did_save(self, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = _text_document_uri_from_params(params)
+        if uri is None:
+            return
         doc = self.document_for_uri(uri)
         if doc is None:
             return
         old_signature = self.document_source_signature(doc)
         if "text" in params:
-            doc.text = _normalize_source_text(params.get("text") or "")
-        doc.disk_text = doc.text
-        doc.overlay_active = False
-        doc.file_state = _file_state(doc.path)
+            raw_text = params.get("text")
+            if not isinstance(raw_text, str):
+                return
+            doc.text = _normalize_source_text(raw_text)
+            doc.disk_text = doc.text
+            doc.overlay_active = False
+            doc.file_state = _file_state(doc.path)
+        else:
+            old_signature = self.sync_document_from_disk(doc)
         if old_signature != self.document_source_signature(doc):
             self.clear_document_cache(doc)
         self.publish_diagnostics(doc)
@@ -4021,9 +4316,8 @@ class SSLanguageServer:
                 )
 
     def handle_did_close(self, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
-        if not uri:
+        uri = _text_document_uri_from_params(params)
+        if uri is None:
             return
         doc = self.document_for_uri(uri)
         if not self.pull_diagnostics_enabled:
@@ -4038,9 +4332,7 @@ class SSLanguageServer:
             old_signature = self.document_source_signature(doc)
             doc.opened = False
             if doc.overlay_active:
-                doc.text = doc.disk_text
-                doc.overlay_active = False
-                doc.file_state = _file_state(doc.path)
+                old_signature = self.sync_document_from_disk(doc)
             if old_signature != self.document_source_signature(doc):
                 self.clear_document_cache(doc)
                 if doc.path.lower().endswith(".inc"):
@@ -4052,8 +4344,9 @@ class SSLanguageServer:
                     self.refresh_directory(os.path.dirname(doc.path) or ".")
 
     def handle_document_diagnostic(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result={"kind": "full", "items": []})
@@ -4061,51 +4354,61 @@ class SSLanguageServer:
         self.respond(msg_id, result=self.document_diagnostic_report(doc))
 
     def handle_completion(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
+        position = self.position_from_params(msg_id, params)
+        if position is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result={"isIncomplete": False, "items": []})
             return
-        pos = (params or {}).get("position") or {}
+        line, character = position
         result = self.analyze_base(doc)
         items = completion_items(
             result,
-            int(pos.get("line", 0) or 0),
-            int(pos.get("character", 0) or 0),
+            line,
+            character,
             self.position_encoding,
         )
         items = self.normalize_completion_items(items)
         self.respond(msg_id, result={"isIncomplete": False, "items": items})
 
     def handle_hover(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
+        position = self.position_from_params(msg_id, params)
+        if position is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result=None)
             return
-        pos = (params or {}).get("position") or {}
+        line, character = position
         result = self.analyze_base(doc)
         hover = hover_for_position(
             result,
-            int(pos.get("line", 0) or 0),
-            int(pos.get("character", 0) or 0),
+            line,
+            character,
             self.position_encoding,
         )
         self.respond(msg_id, result=hover)
 
     def handle_definition(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
+        position = self.position_from_params(msg_id, params)
+        if position is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result=[])
             return
-        pos = (params or {}).get("position") or {}
+        line, character = position
         result = self.analyze_base(doc)
-        line = int(pos.get("line", 0) or 0)
-        character = int(pos.get("character", 0) or 0)
         occurrence = occurrence_at_position(
             result, line, character, self.position_encoding
         )
@@ -4138,26 +4441,49 @@ class SSLanguageServer:
         self.respond(msg_id, result=defs)
 
     def handle_references(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
+        position = self.position_from_params(msg_id, params)
+        if position is None:
+            return
+        context = params.get("context")
+        if context is None:
+            context = {}
+        if not isinstance(context, dict):
+            self.respond(
+                msg_id,
+                error={
+                    "code": JSONRPC_INVALID_PARAMS,
+                    "message": "Request context must be an object.",
+                },
+            )
+            return
+        include_declaration = context.get("includeDeclaration", False)
+        if not isinstance(include_declaration, bool):
+            self.respond(
+                msg_id,
+                error={
+                    "code": JSONRPC_INVALID_PARAMS,
+                    "message": "Request context.includeDeclaration must be a boolean.",
+                },
+            )
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result=[])
             return
-        pos = (params or {}).get("position") or {}
+        line, character = position
         result = self.analyze_base(doc)
         occurrence = occurrence_at_position(
             result,
-            int(pos.get("line", 0) or 0),
-            int(pos.get("character", 0) or 0),
+            line,
+            character,
             self.position_encoding,
         )
         if occurrence is None:
             self.respond(msg_id, result=[])
             return
-        include_declaration = bool(
-            ((params or {}).get("context") or {}).get("includeDeclaration", False)
-        )
         refs = self.symbol_occurrences(
             os.path.dirname(doc.path) or ".", occurrence.symbol_id
         )
@@ -4171,18 +4497,22 @@ class SSLanguageServer:
         )
 
     def handle_prepare_rename(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
+        position = self.position_from_params(msg_id, params)
+        if position is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result=None)
             return
-        pos = (params or {}).get("position") or {}
+        line, character = position
         result = self.analyze_base(doc)
         occurrence = occurrence_at_position(
             result,
-            int(pos.get("line", 0) or 0),
-            int(pos.get("character", 0) or 0),
+            line,
+            character,
             self.position_encoding,
         )
         if occurrence is None or not occurrence.renamable:
@@ -4203,21 +4533,35 @@ class SSLanguageServer:
         )
 
     def handle_rename(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
+        position = self.position_from_params(msg_id, params)
+        if position is None:
+            return
+        raw_new_name = params.get("newName")
+        if not isinstance(raw_new_name, str):
+            self.respond(
+                msg_id,
+                error={
+                    "code": JSONRPC_INVALID_PARAMS,
+                    "message": "Request newName must be a string.",
+                },
+            )
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result=None)
             return
-        pos = (params or {}).get("position") or {}
+        line, character = position
         result = self.analyze_base(doc)
         occurrence = occurrence_at_position(
             result,
-            int(pos.get("line", 0) or 0),
-            int(pos.get("character", 0) or 0),
+            line,
+            character,
             self.position_encoding,
         )
-        new_name = str((params or {}).get("newName") or "")
+        new_name = raw_new_name
         if occurrence is None or not occurrence.renamable:
             self.respond(
                 msg_id,
@@ -4267,8 +4611,9 @@ class SSLanguageServer:
         self.respond(msg_id, result={"changes": changes})
 
     def handle_semantic_tokens_full(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result={"data": []})
@@ -4309,8 +4654,9 @@ class SSLanguageServer:
         )
 
     def handle_document_symbol(self, msg_id: Any, params: dict[str, Any]) -> None:
-        td = (params or {}).get("textDocument") or {}
-        uri = str(td.get("uri") or "")
+        uri = self.text_document_uri_from_params(msg_id, params)
+        if uri is None:
+            return
         doc = self.get_or_load_document(uri)
         if doc is None:
             self.respond(msg_id, result=[])
@@ -4331,6 +4677,7 @@ class SSLanguageServer:
         previous_work_done_finished = self.current_work_done_finished
         if key is not None:
             self.pending_request_ids.discard(key)
+            self.pending_request_progress_tokens.pop(key, None)
             self.active_request_ids.add(key)
         self.current_request_id = msg_id
         self.current_work_done_token = self.progress_token_from_params(params)
@@ -4349,6 +4696,9 @@ class SSLanguageServer:
             )
         finally:
             self.finish_work_done_progress()
+            token = self.current_work_done_token
+            if token is not None:
+                self.cancelled_progress_tokens.discard(token)
             if key is not None:
                 self.active_request_ids.discard(key)
                 self.cancelled_request_ids.discard(key)
@@ -4397,6 +4747,15 @@ class SSLanguageServer:
             self.handle_cancel_request(params)
             return
         if method == "exit":
+            if has_id:
+                self.respond(
+                    msg_id,
+                    error={
+                        "code": JSONRPC_METHOD_NOT_FOUND,
+                        "message": f"Method not found: {method}",
+                    },
+                )
+                return
             raise SystemExit(0 if self.shutdown_requested else 1)
         if not self.initialize_seen:
             if method == "initialize":
@@ -4460,9 +4819,10 @@ class SSLanguageServer:
             )
             return
         if method == "initialized":
-            self.initialized = True
             return
         if method == "window/workDoneProgress/cancel":
+            params = raw_params if isinstance(raw_params, dict) else {}
+            self.handle_progress_cancel(params)
             return
         methods_with_object_params = {
             "textDocument/didOpen",
@@ -4602,11 +4962,6 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     argv = list(argv)
     serial = False
-    if argv and argv[0] in {"-h", "--help"}:
-        sys.stdout.write("siglus-ssu -lsp [--serial]\n")
-        sys.stdout.write("Run the SiglusSceneScript Language Server over stdio.\n")
-        sys.stdout.write("  --serial  Disable default parallel workspace scanning.\n")
-        return 0
     for arg in argv:
         if arg in {"-h", "--help"}:
             sys.stdout.write("siglus-ssu -lsp [--serial]\n")

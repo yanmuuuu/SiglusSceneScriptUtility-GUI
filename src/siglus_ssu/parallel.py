@@ -126,7 +126,11 @@ def parallel_process_completed_map(
         except BaseException:
             for future in futures:
                 future.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
+            terminate_workers = getattr(executor, "terminate_workers", None)
+            if callable(terminate_workers):
+                terminate_workers()
+            else:
+                executor.shutdown(wait=False, cancel_futures=True)
             raise
         else:
             executor.shutdown()
