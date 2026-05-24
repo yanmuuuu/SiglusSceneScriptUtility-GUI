@@ -243,18 +243,18 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 |---|---|
 | `<input_dir>` | 包含 `.ss` 源文件的目录，可选包含 `.inc`、`.ini` / `Gameexe.ini`、`暗号.dat`。 |
 | `<output_pck \| output_dir>` | 输出路径。若参数指向一个已存在目录，则在其中创建 `Scene.pck`。否则该参数会按输出文件路径处理；即使一个不存在的路径不以 `.pck` 结尾，也会按这个精确文件名写出。 |
-| `--debug` | 编译后保留中间临时文件（`.dat`、`.lzss` 等）。不能与 `--tmp` 同用。 |
+| `--debug` | 编译后保留中间临时文件（`.dat`、`.lzss` 等）。 |
 | `--charset ENC` | 强制指定源文件编码。接受值：`jis`、`cp932`、`sjis`、`shift_jis`（均等价于 Shift-JIS）或 `utf8`、`utf-8`。省略时自动检测。 |
 | `--no-os` | 跳过 OS（原始 source）嵌入阶段。仍会正常生成并写出 `Scene.pck`，只是包内不再附带原始 source；不影响脚本本身的加密或压缩。 |
-| `--dat-repack` | 不编译 `.ss` 脚本，而是扫描 `input_dir` 当前层现有的 Siglus 场景 `.dat` 文件，将它们复制后直接打包成一个 `.pck` 文件。这对于打包已经编译好的脚本非常有用。它只能与 `--no-os` 和/或 `--no-lzss` 组合使用。不能与 `--tmp` 或 `--test-shuffle` 同用。 |
+| `--dat-repack` | 不编译 `.ss` 脚本，而是扫描 `input_dir` 当前层现有的 Siglus 场景 `.dat` 文件，将它们复制后直接打包成一个 `.pck` 文件。这对于打包已经编译好的脚本非常有用。它只能与 `--no-os` 和/或 `--no-lzss` 组合使用。不能与 `--test-shuffle` 同用。 |
 | `--no-angou` | 禁用 LZSS 压缩和 XOR 加密（`header_size = 0`），并且不嵌入原始 source。可用于调试或无加密的引擎。 |
 | `--no-lzss` | 禁用 LZSS 阶段，同时保留脚本原有的加密与头部行为。此模式不嵌入原始 source chunk，对应官方的“easy link”式输出。 |
 | `--serial` | 禁用多进程并行编译，并强制编译阶段按串行方式运行。默认启用并行编译。 |
 | `--max-workers N` | 最大并行工作进程数。仅在启用并行编译时生效；默认为自动。 |
 | `--lzss-level N` | LZSS 压缩级别，`2`（快，文件大）到 `17`（慢，文件最小）。默认：`17`。 |
-| `--set-shuffle SEED` | 设置每脚本字符串表位置混淆的 MSVC 兼容 `rand()` 初始种子。接受十进制或 `0x...` 十六进制。默认：`1`。启用时等同于隐式带上 `--serial`。不能与 `--tmp` 同用。 |
-| `--tmp <tmp_dir>` | 使用指定的持久临时目录。提供此参数后，编译器会在该目录内维护 MD5 缓存（`_md5.json`），从而实现**增量编译**——后续运行时只重编译已更改的 `.ss` 文件，除非 `.dat` 编译产物 fingerprint 发生变化。不能与 `--debug`、`--dat-repack`、`--set-shuffle` 或 `--test-shuffle` 同用。 |
-| `--test-shuffle [seed0]` | 穷举搜索所有可能的 32 位 MSVC `rand()` 种子，以找到能精确重建 `<test_dir>` 中字符串表混淆顺序的种子。可选从 `seed0` 开始扫描。不能与 `--tmp` 同用。 |
+| `--set-shuffle SEED` | 设置每脚本字符串表位置混淆的 MSVC 兼容 `rand()` 初始种子。接受十进制或 `0x...` 十六进制。默认：`1`。启用时等同于隐式带上 `--serial`。 |
+| `--tmp <tmp_dir>` | 使用指定的持久临时目录。提供此参数后，编译器会在该目录内维护 MD5 缓存（`_md5.json`），从而实现**增量编译**——后续运行时只重编译已更改的 `.ss` 文件。 |
+| `--test-shuffle [seed0]` | 穷举搜索所有可能的 32 位 MSVC `rand()` 种子，以找到能精确重建 `<test_dir>` 中字符串表混淆顺序的种子。可选从 `seed0` 开始扫描。 |
 | `--csv <seed_csv>` | 与 `--test-shuffle` 同用时，写出 CSV，记录串行重建阶段每个场景对象的初态种子和终态种子。若路径是已存在目录或以路径分隔符结尾，则在其中写出 `test_shuffle_seeds.csv`。 |
 | `--gei` | 仅运行 `Gameexe.ini` → `Gameexe.dat` 编译阶段，并在解析后的输出目录写出固定文件名 `Gameexe.dat`。若希望写入某个目录，请传入已存在目录；否则通用输出路径解析器会把该参数视为输出文件路径，并使用其父目录。 |
 
@@ -313,7 +313,7 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 #### 说明
 
 - **自动编码检测：** 若未指定 `--charset`，工具会扫描 `.ss`、`.inc`、`.ini`、`.dat` 文件中的 UTF-8 BOM 或假名/CJK 字符。找到则使用 `utf-8`，否则使用 `cp932`（Shift-JIS）。
-- **增量编译：** 当指定 `--tmp` 时，编译器会缓存所有 `.ss` 和 `.inc` 文件的 MD5 哈希，并同时缓存覆盖强制源码字符集、串行模式、解析后的并行 worker 数与 const profile 的 `.dat` 编译产物 fingerprint。下次运行时仅重编译已更改（或缺少对应 `.dat`）的文件。若任一 `.inc` 文件或 fingerprint 字段发生变化，则触发全量重编译。`--no-angou`、`--no-lzss`、`--no-os`、`--lzss-level` 这类只影响链接阶段的选项会通过重新链接处理，不进入该 fingerprint。
+- **增量编译：** 当指定 `--tmp` 时，编译器会缓存所有 `.ss` 和 `.inc` 文件的 MD5 哈希。下次运行时仅重编译已更改（或缺少对应 `.dat`）的文件。若任一 `.inc` 文件发生变化，则触发全量重编译。
 - **字符串混淆：** 编译器会用 MSVC 兼容 `rand()` 种子打乱每个 `.dat` 的字符串表。翻译工作通常**不需要**复现这一点；`--set-shuffle` 和 `--test-shuffle` 主要用于追求逐字节一致的二进制输出。
 
 ---

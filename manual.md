@@ -243,18 +243,18 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 |---|---|
 | `<input_dir>` | Directory containing `.ss` source files, optionally alongside `.inc`, `.ini` / `Gameexe.ini`, and `暗号.dat`. |
 | `<output_pck \| output_dir>` | Output path. If the argument names an existing directory, `Scene.pck` is created inside it. Otherwise the argument is treated as the output file path; a non-existent path that does not end in `.pck` is still written as that exact file name. |
-| `--debug` | Keep intermediate temporary files (`.dat`, `.lzss`, etc.) after compilation. Cannot be combined with `--tmp`. |
+| `--debug` | Keep intermediate temporary files (`.dat`, `.lzss`, etc.) after compilation. |
 | `--charset ENC` | Force source file encoding. Accepted values: `jis`, `cp932`, `sjis`, `shift_jis` (all equivalent to CP932/Shift-JIS), or `utf8`, `utf-8`. If omitted, the encoding is auto-detected. |
 | `--no-os` | Skip the OS (Original Source) embedding stage. The `Scene.pck` is still generated and written out normally, but no original source files are embedded inside it. Does not affect encryption or compression of the scripts themselves. |
-| `--dat-repack` | Instead of compiling `.ss` scripts, scan the immediate files in `input_dir` for existing Siglus scene `.dat` files, copy them, and pack them directly into a `.pck` file. Useful for packing already-compiled scripts. It can only be combined with `--no-os` and/or `--no-lzss`. Cannot be combined with `--tmp` or `--test-shuffle`. |
+| `--dat-repack` | Instead of compiling `.ss` scripts, scan the immediate files in `input_dir` for existing Siglus scene `.dat` files, copy them, and pack them directly into a `.pck` file. Useful for packing already-compiled scripts. It can only be combined with `--no-os` and/or `--no-lzss`. Cannot be combined with `--test-shuffle`. |
 | `--no-angou` | Disable LZSS compression and XOR encryption. Sets `header_size = 0` and omits original source embedding. Useful for debugging or for engines without encryption. |
 | `--no-lzss` | Disable the LZSS stage while keeping the usual script encryption/header behavior. Original source chunks are not embedded in this mode. This matches the official "easy link" style output. |
 | `--serial` | Disable multi-process parallel compilation and force the compile stage to run serially. Parallel compilation is enabled by default. |
 | `--max-workers N` | Maximum number of parallel worker processes. Only effective while parallel compilation is enabled; defaults to auto. |
 | `--lzss-level N` | LZSS compression level, from `2` (fast, large) to `17` (slow, smallest). Default: `17`. |
-| `--set-shuffle SEED` | Set the initial MSVC-compatible `rand()` seed for the per-script string table shuffle. Accepts decimal or `0x...` hex. Default: `1`. Implies `--serial`. Cannot be combined with `--tmp`. |
-| `--tmp <tmp_dir>` | Use a specific persistent temporary directory. When provided, an MD5 cache (`_md5.json`) is maintained inside this directory to enable **incremental compilation** — only changed `.ss` files are recompiled on subsequent runs unless the `.dat` compile-output fingerprint changes. Cannot be combined with `--debug`, `--dat-repack`, `--set-shuffle`, or `--test-shuffle`. |
-| `--test-shuffle [seed0]` | Brute-force scan all possible 32-bit MSVC `rand()` seeds to find the one that reproduces the string table order in `<test_dir>`. Optionally start the scan at `seed0`. Cannot be combined with `--tmp`. |
+| `--set-shuffle SEED` | Set the initial MSVC-compatible `rand()` seed for the per-script string table shuffle. Accepts decimal or `0x...` hex. Default: `1`. Implies `--serial`. |
+| `--tmp <tmp_dir>` | Use a specific persistent temporary directory. When provided, an MD5 cache (`_md5.json`) is maintained inside this directory to enable **incremental compilation** — only changed `.ss` files are recompiled on subsequent runs. |
+| `--test-shuffle [seed0]` | Brute-force scan all possible 32-bit MSVC `rand()` seeds to find the one that reproduces the string table order in `<test_dir>`. Optionally start the scan at `seed0`. |
 | `--csv <seed_csv>` | With `--test-shuffle`, write a CSV containing each scene object's initial seed and final seed from the serial rebuild pass. If the path is an existing directory or ends with a path separator, `test_shuffle_seeds.csv` is written inside it. |
 | `--gei` | Only run the `Gameexe.ini` → `Gameexe.dat` compilation stage, writing a fixed filename `Gameexe.dat` into the resolved output directory. Pass an existing directory when you want the file created inside that directory; otherwise the shared output-path parser treats the argument as an output file path and uses its parent directory. |
 
@@ -313,7 +313,7 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 #### Notes
 
 - **Auto-encoding detection:** If `--charset` is not specified, the utility scans `.ss`, `.inc`, `.ini`, and `.dat` files for a UTF-8 BOM or kana/CJK characters. If found, `utf-8` is used; otherwise, `cp932` (Shift-JIS) is assumed.
-- **Incremental compilation:** When `--tmp` is specified, the compiler caches MD5 hashes of all `.ss` and `.inc` files together with a `.dat` compile-output fingerprint covering the forced source charset, serial mode, resolved parallel worker count, and const profile. On the next run, only files whose hash has changed (or whose `.dat` is missing) are recompiled. If any `.inc` file or fingerprint field changes, a full recompile is triggered. Link-only options such as `--no-angou`, `--no-lzss`, `--no-os`, and `--lzss-level` are handled by relinking and are not part of this fingerprint.
+- **Incremental compilation:** When `--tmp` is specified, the compiler caches MD5 hashes of all `.ss` and `.inc` files. On the next run, only files whose hash has changed (or whose `.dat` is missing) are recompiled. If any `.inc` file changes, a full recompile is triggered.
 - **Shuffle seed:** The compiler shuffles each `.dat` string table with an MSVC-compatible `rand()` seed. You do not need to match this for normal translation work — the engine reads strings correctly regardless of order. The `--set-shuffle` and `--test-shuffle` options are only needed if you want byte-for-byte identical binary output.
 
 ---

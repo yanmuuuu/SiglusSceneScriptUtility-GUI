@@ -485,25 +485,6 @@ def _record_angou(ctx, content):
     ctx.setdefault("stats", {})["angou_content"] = content
 
 
-def _compile_cache_fingerprint(args, ctx, user_seed=None):
-    force_serial = bool(getattr(args, "serial", False) or user_seed is not None)
-    if force_serial:
-        compile_workers = 1
-    else:
-        from .parallel import get_max_workers
-
-        compile_workers = int(get_max_workers(getattr(args, "max_workers", None)))
-    return {
-        "version": 1,
-        "charset_force": str(ctx.get("charset_force", "") or ""),
-        "serial": force_serial,
-        "compile_workers": compile_workers,
-        "set_shuffle": "" if user_seed is None else str(int(user_seed) & 0xFFFFFFFF),
-        "const_profile": getattr(C, "_SIGLUS_SSU_CONST_PROFILE", None),
-        "const_sha512": str(getattr(C, "_SIGLUS_SSU_CONST_SHA512", "") or ""),
-    }
-
-
 def _print_summary(ctx):
     stats = ctx.get("stats") if isinstance(ctx, dict) else None
     if not isinstance(stats, dict):
@@ -585,7 +566,7 @@ def main(argv=None):
                 f"{prog}: error: --dat-repack is not compatible with --test-shuffle\n"
             )
             return 2
-        allowed = {"--dat-repack", "--no-os", "--no-lzss", "--tmp"}
+        allowed = {"--dat-repack", "--no-os", "--no-lzss"}
         bad = []
         for t in argv:
             s = str(t)
@@ -677,21 +658,6 @@ def main(argv=None):
     if test_shuffle_csv_path and not test_shuffle:
         sys.stderr.write(f"{prog}: error: --csv requires --test-shuffle\n")
         return 2
-    if getattr(a, "tmp_dir", ""):
-        bad_tmp = []
-        if bool(getattr(a, "debug", False)):
-            bad_tmp.append("--debug")
-        if bool(getattr(a, "dat_repack", False)):
-            bad_tmp.append("--dat-repack")
-        if getattr(a, "set_shuffle", None) is not None:
-            bad_tmp.append("--set-shuffle")
-        if test_shuffle:
-            bad_tmp.append("--test-shuffle")
-        if bad_tmp:
-            sys.stderr.write(
-                f"{prog}: error: --tmp cannot be used with {', '.join(bad_tmp)}\n"
-            )
-            return 2
     user_seed = None
     if getattr(a, "set_shuffle", None) is not None:
         try:
@@ -792,11 +758,6 @@ def main(argv=None):
     if angou_content and len(angou_content.encode("cp932", "ignore")) < 8:
         angou_content = None
     _record_angou(ctx, angou_content)
-    cache_fingerprint = _compile_cache_fingerprint(
-        a,
-        ctx,
-        user_seed=user_seed,
-    )
     ok = False
     compile_stats = {
         "parallel": False,
@@ -812,7 +773,6 @@ def main(argv=None):
             md5_path = os.path.join(tmp, "_md5.json")
             cur_inc = {}
             cur_ss = {}
-            cache_manifest = None
 
             def _md5_file(p):
                 h = hashlib.md5()
@@ -845,14 +805,11 @@ def main(argv=None):
                 if not isinstance(old, dict):
                     full_compile = True
                 else:
-                    if old.get("fingerprint") != cache_fingerprint:
-                        full_compile = True
-                    else:
-                        old_inc = old.get("inc") or {}
-                        for k in set(cur_inc.keys()) | set((old_inc or {}).keys()):
-                            if str(cur_inc.get(k, "")) != str(old_inc.get(k, "")):
-                                full_compile = True
-                                break
+                    old_inc = old.get("inc") or {}
+                    for k in set(cur_inc.keys()) | set((old_inc or {}).keys()):
+                        if str(cur_inc.get(k, "")) != str(old_inc.get(k, "")):
+                            full_compile = True
+                            break
                 bs_dir = os.path.join(tmp, "bs")
                 if full_compile:
                     if (not a.no_angou) and os.path.isdir(bs_dir):
@@ -893,11 +850,15 @@ def main(argv=None):
                 for p in ss or []:
                     if os.path.isfile(p):
                         cur_ss[os.path.basename(p).lower()] = _md5_file(p)
-            cache_manifest = {
-                "fingerprint": cache_fingerprint,
-                "inc": cur_inc,
-                "ss": cur_ss,
-            }
+            write_text(
+                md5_path,
+                json.dumps(
+                    {"inc": cur_inc, "ss": cur_ss},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                enc="utf-8",
+            )
             if getattr(a, "dat_repack", False):
                 bs_dir = os.path.join(tmp, "bs")
                 os.makedirs(bs_dir, exist_ok=True)
@@ -1075,16 +1036,6 @@ def main(argv=None):
                 _set_macro_stats(ctx, None)
                 _set_read_flag_stats(ctx, None, None, None)
             link_pack(ctx)
-            if cache_manifest is not None:
-                write_text(
-                    md5_path,
-                    json.dumps(
-                        cache_manifest,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                    ),
-                    enc="utf-8",
-                )
         ok = True
     except Exception as e:
         msg = str(e) if e is not None else ""
