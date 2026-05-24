@@ -127,12 +127,11 @@ def _load_scene_data(ctx, scn_names, lzss_mode, max_workers=None, parallel=True)
         enc_names.append(nm)
         if lzss_mode:
             lz_path = os.path.join(bs_dir, nm + ".lzss")
-            lzss_level = ctx.get("lzss_level", 17)
             t = time.time()
             if not easy_code:
                 raise RuntimeError("ctx.easy_angou_code is not set")
             dat = read_bytes(dat_path)
-            lz = _m.lzss_pack(dat, level=lzss_level)
+            lz = _m.lzss_pack(dat)
             b = bytearray(lz)
             xor_cycle_inplace(b, easy_code, 0)
             lz = bytes(b)

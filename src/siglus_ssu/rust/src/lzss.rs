@@ -128,13 +128,12 @@ struct LzssTreeFind<'a> {
 }
 
 impl<'a> LzssTreeFind<'a> {
-    fn new(src: &'a [u8], window_size: usize, look_ahead_size: usize, level: usize) -> Self {
-        let max_match_len = level.clamp(2, look_ahead_size);
+    fn new(src: &'a [u8], window_size: usize, look_ahead_size: usize) -> Self {
         Self {
             src,
             src_cnt: src.len(),
             window_size,
-            max_match_len,
+            max_match_len: look_ahead_size,
             src_index: 0,
             match_target: 0,
             match_size: 0,
@@ -200,12 +199,12 @@ impl<'a> LzssTreeFind<'a> {
     }
 }
 
-pub fn pack_with_level(src: &[u8], level: usize, suppress_empty_tail_group: bool) -> Vec<u8> {
+pub fn pack(src: &[u8], suppress_empty_tail_group: bool) -> Vec<u8> {
     if src.is_empty() {
         return Vec::new();
     }
 
-    let mut tree_find = LzssTreeFind::new(src, WINDOW_SIZE, LOOK_AHEAD, level);
+    let mut tree_find = LzssTreeFind::new(src, WINDOW_SIZE, LOOK_AHEAD);
 
     let mut pack_buf = vec![0u8; 8];
     let mut pack_data = [0u8; 1 + 2 * 8];
@@ -264,11 +263,6 @@ pub fn pack_with_level(src: &[u8], level: usize, suppress_empty_tail_group: bool
     pack_buf[4..8].copy_from_slice(&org_size.to_le_bytes());
 
     pack_buf
-}
-
-#[inline]
-pub fn pack(src: &[u8], suppress_empty_tail_group: bool) -> Vec<u8> {
-    pack_with_level(src, LOOK_AHEAD, suppress_empty_tail_group)
 }
 
 pub fn unpack(src: &[u8]) -> Vec<u8> {

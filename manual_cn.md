@@ -251,7 +251,6 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 | `--no-lzss` | 禁用 LZSS 阶段，同时保留脚本原有的加密与头部行为。此模式不嵌入原始 source chunk，对应官方的“easy link”式输出。不能与 `--tmp` 同用。 |
 | `--serial` | 禁用多进程并行编译，并强制编译阶段按串行方式运行。默认启用并行编译。 |
 | `--max-workers N` | 最大并行工作进程数。仅在启用并行编译时生效；默认为自动。 |
-| `--lzss-level N` | LZSS 压缩级别，`2`（快，文件大）到 `17`（慢，文件最小）。默认：`17`。 |
 | `--set-shuffle SEED` | 设置每脚本字符串表位置混淆的 MSVC 兼容 `rand()` 初始种子。接受十进制或 `0x...` 十六进制。默认：`1`。启用时等同于隐式带上 `--serial`。不能与 `--tmp` 同用。 |
 | `--tmp <tmp_dir>` | 使用指定的持久临时目录。提供此参数后，编译器会在该目录内维护 MD5 缓存（`_md5.json`），从而实现**增量编译**——后续运行时只重编译已更改的 `.ss` 文件。不能与 `--debug`、`--dat-repack`、`--no-angou`、`--no-lzss`、`--set-shuffle`、`--test-shuffle`、`--csv`、`--gei` 或全局 `--const-profile` 同用。 |
 | `--test-shuffle [seed0]` | 穷举搜索所有可能的 32 位 MSVC `rand()` 种子，以找到能精确重建 `<test_dir>` 中字符串表混淆顺序的种子。可选从 `seed0` 开始扫描。不能与 `--tmp` 同用。 |

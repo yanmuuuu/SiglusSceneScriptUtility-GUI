@@ -25,18 +25,6 @@ fn lzss_pack(
 }
 
 #[pyfunction]
-#[pyo3(signature = (data, level, suppress_empty_tail_group=false))]
-fn lzss_pack_level(
-    py: Python<'_>,
-    data: &[u8],
-    level: usize,
-    suppress_empty_tail_group: bool,
-) -> PyResult<Py<PyBytes>> {
-    let result = lzss::pack_with_level(data, level, suppress_empty_tail_group);
-    Ok(PyBytes::new(py, &result).into())
-}
-
-#[pyfunction]
 fn lzss_unpack(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyBytes>> {
     let result = lzss::unpack(data);
     Ok(PyBytes::new(py, &result).into())
@@ -403,7 +391,6 @@ fn find_shuffle_seed_first(
 #[pymodule]
 fn native_accel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(lzss_pack, m)?)?;
-    m.add_function(wrap_pyfunction!(lzss_pack_level, m)?)?;
     m.add_function(wrap_pyfunction!(lzss_unpack, m)?)?;
     m.add_function(wrap_pyfunction!(lzss32_pack, m)?)?;
     m.add_function(wrap_pyfunction!(lzss32_unpack, m)?)?;

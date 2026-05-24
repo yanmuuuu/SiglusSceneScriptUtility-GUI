@@ -122,13 +122,12 @@ struct LzssTreeFind<'a> {
 }
 
 impl<'a> LzssTreeFind<'a> {
-    fn new(src: &'a [u32], window_size: usize, look_ahead_size: usize, level: usize) -> Self {
-        let max_match_len = std::cmp::max(2, std::cmp::min(level, look_ahead_size));
+    fn new(src: &'a [u32], window_size: usize, look_ahead_size: usize) -> Self {
         Self {
             src,
             src_cnt: src.len(),
             window_size,
-            max_match_len,
+            max_match_len: look_ahead_size,
             src_index: 0,
             match_target: 0,
             match_size: 0,
@@ -207,7 +206,7 @@ pub fn pack(src: &[u8]) -> Result<Vec<u8>, String> {
             .map_err(|_| "lzss32: bad chunk".to_string())?;
         dwords.push(u32::from_le_bytes(arr));
     }
-    let mut tree_find = LzssTreeFind::new(&dwords, WINDOW_SIZE, LOOK_AHEAD, LOOK_AHEAD);
+    let mut tree_find = LzssTreeFind::new(&dwords, WINDOW_SIZE, LOOK_AHEAD);
     let mut pack_buf = vec![0u8; 8];
     let mut pack_data = [0u8; 1 + 3 * 8];
     pack_data[0] = 0;

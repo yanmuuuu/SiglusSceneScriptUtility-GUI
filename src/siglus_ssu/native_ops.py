@@ -15,7 +15,6 @@ try:
     from . import native_accel
 
     _native_lzss_pack = native_accel.lzss_pack
-    _native_lzss_pack_level = native_accel.lzss_pack_level
     _native_lzss_unpack = native_accel.lzss_unpack
     _native_lzss32_pack = getattr(native_accel, "lzss32_pack", None)
     _native_lzss32_unpack = getattr(native_accel, "lzss32_unpack", None)
@@ -29,7 +28,6 @@ try:
     _USE_NATIVE = True
 except (ImportError, AttributeError):
     _USE_NATIVE = False
-    _native_lzss_pack_level = None
     _native_lzss32_pack = None
     _native_lzss32_unpack = None
     _native_msvcrand_shuffle_inplace = None
@@ -120,12 +118,11 @@ class _LzssTreeFind:
         src_cnt: int,
         window_size: int,
         look_ahead_size: int,
-        level: int = 17,
     ):
         self.src = src
         self.src_cnt = src_cnt
         self.window_size = window_size
-        self.max_match_len = max(2, min(level, look_ahead_size))
+        self.max_match_len = look_ahead_size
         self.src_index = 0
         self.match_target = 0
         self.match_size = 0
@@ -174,9 +171,7 @@ class _LzssTreeFind:
                     break
 
 
-def _py_lzss_pack(
-    src: bytes, level: int = 17, suppress_empty_tail_group: bool = False
-) -> bytes:
+def _py_lzss_pack(src: bytes, suppress_empty_tail_group: bool = False) -> bytes:
     if not src:
         return b""
     INDEX_BITS = 12
@@ -186,7 +181,7 @@ def _py_lzss_pack(
     WINDOW_SIZE = 1 << INDEX_BITS
     tree_find = _LzssTreeFind()
     mv = memoryview(src)
-    tree_find.ready(mv, len(src), WINDOW_SIZE, LOOK_AHEAD, level)
+    tree_find.ready(mv, len(src), WINDOW_SIZE, LOOK_AHEAD)
     pack_buf = bytearray(b"\0" * 8)
     pack_buf_size = 8
     pack_data = bytearray(1 + (3 * 8))
@@ -254,7 +249,7 @@ def _py_lzss32_pack(src: bytes) -> bytes:
     LOOK_AHEAD = (1 << LENGTH_BITS) + BREAK_EVEN
     WINDOW_SIZE = 1 << INDEX_BITS
     tree_find = _LzssTreeFind()
-    tree_find.ready(dwords, src_cnt, WINDOW_SIZE, LOOK_AHEAD, LOOK_AHEAD)
+    tree_find.ready(dwords, src_cnt, WINDOW_SIZE, LOOK_AHEAD)
     pack_buf = bytearray(b"\0" * 8)
     pack_data = bytearray(1 + (3 * 8))
     pack_data[0] = 0
@@ -462,17 +457,10 @@ def _py_tile_copy(d, s, bx, by, t, tx, ty, repx, repy, rev, lim):
                 d[i : i + 4] = s[i : i + 4]
 
 
-def lzss_pack(
-    src: bytes, level: int = 17, suppress_empty_tail_group: bool = False
-) -> bytes:
+def lzss_pack(src: bytes, suppress_empty_tail_group: bool = False) -> bytes:
     if _USE_NATIVE:
-        if level == 17:
-            return _native_lzss_pack(src, suppress_empty_tail_group)
-        elif _native_lzss_pack_level is not None:
-            return _native_lzss_pack_level(src, level, suppress_empty_tail_group)
-        else:
-            return _native_lzss_pack(src, suppress_empty_tail_group)
-    return _py_lzss_pack(src, level, suppress_empty_tail_group)
+        return _native_lzss_pack(src, suppress_empty_tail_group)
+    return _py_lzss_pack(src, suppress_empty_tail_group)
 
 
 def lzss_unpack(src: bytes) -> bytes:

@@ -1033,7 +1033,7 @@ def _parse_scn_dat_with_decrypt(blob: bytes, exe_el: bytes):
 def _encode_scn_dat(blob: bytes, enc: dict, exe_el: bytes) -> bytes:
     b = blob
     if enc and enc.get("lzss"):
-        b = lzss_pack(b, level=17)
+        b = lzss_pack(b)
     if enc and enc.get("easy"):
         code = C.EASY_ANGOU_CODE or b""
         if code:

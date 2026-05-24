@@ -71,8 +71,7 @@ def source_angou_encrypt(data: bytes, name: str, ctx: dict) -> bytes:
     hs = sa.get("header_size")
     if not hs:
         raise ValueError("source_angou_encrypt: missing header_size")
-    lzss_level = ctx.get("lzss_level", 17)
-    lz = lzss_pack(data, level=lzss_level)
+    lz = lzss_pack(data)
     lzsz = len(lz)
     b = bytearray(lz)
     xor_cycle_inplace(b, eg, int(sa.get("easy_index", 0)))
@@ -664,12 +663,6 @@ def main(argv=None):
         help="Maximum parallel workers for compilation (default: auto; parallel only).",
     )
     ap.add_argument(
-        "--lzss-level",
-        type=int,
-        default=17,
-        help="LZSS compression level (2-17, default: 17).",
-    )
-    ap.add_argument(
         "--set-shuffle",
         dest="set_shuffle",
         default=None,
@@ -763,7 +756,6 @@ def main(argv=None):
         "utf8": bool(use_utf8),
         "charset": enc,
         "charset_force": charset,
-        "lzss_level": a.lzss_level,
         "debug_outputs": bool(a.debug),
         "lzss_mode": (not a.no_angou),
         "exe_angou_mode": (not a.no_angou),

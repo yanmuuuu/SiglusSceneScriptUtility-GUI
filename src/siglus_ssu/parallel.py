@@ -278,9 +278,9 @@ def parallel_compile(
 
 
 def _lzss_compress_task(
-    args: tuple[str, str, str, bytes, int],
+    args: tuple[str, str, str, bytes],
 ) -> tuple[str, bytes, bytes, Exception | None]:
-    nm, dat_path, lz_path, easy_code, lzss_level = args
+    nm, dat_path, lz_path, easy_code = args
     try:
         from .common import read_bytes, write_bytes
         from . import compiler as _m
@@ -291,7 +291,7 @@ def _lzss_compress_task(
         dat = read_bytes(dat_path)
         if not easy_code:
             raise RuntimeError("ctx.easy_angou_code is not set")
-        lz = _m.lzss_pack(dat, level=lzss_level)
+        lz = _m.lzss_pack(dat)
         b = bytearray(lz)
         xor_cycle_inplace(b, easy_code, 0)
         lz = bytes(b)
@@ -322,14 +322,12 @@ def parallel_lzss_compress(
             dat_list.append(dat)
             enc_names.append(nm)
         return (enc_names, dat_list, [])
-    lzss_level = ctx.get("lzss_level", 17)
     tasks = [
         (
             nm,
             os.path.join(bs_dir, nm + ".dat"),
             os.path.join(bs_dir, nm + ".lzss"),
             easy_code,
-            lzss_level,
         )
         for nm in scn_names
     ]
@@ -362,16 +360,16 @@ def parallel_lzss_compress(
 
 
 def _source_encrypt_task(
-    args: tuple[str, str, str, dict, bool, int],
+    args: tuple[str, str, str, dict, bool],
 ) -> tuple[str, int, bytes, Exception | None]:
-    rel, src_path, cache_path, source_angou, skip, lzss_level = args
+    rel, src_path, cache_path, source_angou, skip = args
     try:
         from .common import read_bytes, write_cached_bytes
         from . import compiler as _m
 
         if not os.path.isfile(src_path):
             return (rel, 0, b"", None)
-        ctx = {"source_angou": source_angou, "lzss_level": lzss_level}
+        ctx = {"source_angou": source_angou}
         raw = read_bytes(src_path)
         enc_blob = _m.source_angou_encrypt(raw, rel, ctx)
         write_cached_bytes(cache_path, enc_blob)
@@ -396,13 +394,12 @@ def parallel_source_encrypt(
     if tmp_path:
         os.makedirs(os.path.join(tmp_path, "os"), exist_ok=True)
     tasks = []
-    lzss_level = ctx.get("lzss_level", 17)
     for rel in rel_list:
         src_path = os.path.join(scn_path, rel.replace("\\", os.sep))
         cache_path = (
             os.path.join(tmp_path, "os", rel.replace("\\", os.sep)) if tmp_path else ""
         )
-        tasks.append((rel, src_path, cache_path, source_angou, skip, lzss_level))
+        tasks.append((rel, src_path, cache_path, source_angou, skip))
     workers = get_max_workers(max_workers)
     results = {}
     errors = []
