@@ -1630,18 +1630,58 @@ def add_gap_sections(secs, used, total):
         secs.append((prev, total, "G", "gap/unknown"))
 
 
-def print_sections(secs, total):
+def print_sections(secs, total, section_ids=None):
     secs = [s for s in (secs or []) if s[1] > s[0]]
-    secs.sort(key=lambda t: (t[0], -t[1], t[2], t[3]))
     w = int(C.NAME_W)
+    section_ids = section_ids or {}
+
+    def _section_id(name):
+        key = str(name)
+        sid = section_ids.get(key)
+        if sid is None:
+            sid = section_ids.get(key.casefold())
+        return sid
+
+    if section_ids:
+
+        def _sort_key(t):
+            sid = _section_id(t[3])
+            if sid is None:
+                return (0, t[0], -t[1], t[2], t[3])
+            return (1, int(sid), str(t[3]).casefold(), t[0])
+
+        secs.sort(key=_sort_key)
+    else:
+        secs.sort(key=lambda t: (t[0], -t[1], t[2], t[3]))
     print("==== Structure (ranges) ====")
-    print("%3s  %-10s  %-10s  %10s  %-*s" % ("SYM", "START", "LAST", "SIZE", w, "NAME"))
-    print(f"{'-' * 3:3s}  {'-' * 10:<10s}  {'-' * 10:<10s}  {'-' * 10:10s}  {'-' * w}")
-    for a, b, sym, name in secs:
+    if section_ids:
         print(
-            "%3s  %-10s  %-10s  %10d  %-*s"
-            % (sym, hx(a), hx(b - 1), b - a, w, dn(name, w))
+            "%3s  %-10s  %-10s  %10s  %-4s  %-*s"
+            % ("SYM", "START", "LAST", "SIZE", "ID", w, "NAME")
         )
+        print(
+            f"{'-' * 3:3s}  {'-' * 10:<10s}  {'-' * 10:<10s}  {'-' * 10:10s}  {'-' * 4:<4s}  {'-' * w}"
+        )
+        for a, b, sym, name in secs:
+            sid = _section_id(name)
+            sid_text = "%04d" % int(sid) if sid is not None else "-"
+            print(
+                "%3s  %-10s  %-10s  %10d  %-4s  %-*s"
+                % (sym, hx(a), hx(b - 1), b - a, sid_text, w, dn(name, w))
+            )
+    else:
+        print(
+            "%3s  %-10s  %-10s  %10s  %-*s"
+            % ("SYM", "START", "LAST", "SIZE", w, "NAME")
+        )
+        print(
+            f"{'-' * 3:3s}  {'-' * 10:<10s}  {'-' * 10:<10s}  {'-' * 10:10s}  {'-' * w}"
+        )
+        for a, b, sym, name in secs:
+            print(
+                "%3s  %-10s  %-10s  %10d  %-*s"
+                % (sym, hx(a), hx(b - 1), b - a, w, dn(name, w))
+            )
     used = _merge_ranges([(a, b) for a, b, _, nm in secs if nm != "gap/unknown"])
     cov = sum(b - a for a, b in used)
     un = total - cov

@@ -257,11 +257,16 @@ def _pck_sections(blob, preview=False):
     if os_hsz > 0 and tail_start >= 0 and tail_start + os_hsz <= n:
         sec(tail_start, tail_start + os_hsz, "O", "original_source_header (encrypted)")
         tail_start += os_hsz
+    source_entries = []
     if tail_start < n:
-        os = _pck_original_sources(blob, h, scn_data_end) if preview else []
-        if os and any(nm and nm != "unknown.bin" for nm, _, _, _, _ in os):
+        source_entries = (
+            list(_pck_original_source_entries(blob, h, scn_data_end)) if preview else []
+        )
+        if source_entries and any(
+            nm and nm != "unknown.bin" for nm, _, _, _ in source_entries
+        ):
             last = tail_start
-            for nm, a, b, _, _ in os:
+            for nm, a, b, _raw in source_entries:
                 if a > last:
                     sec(last, a, "U", "unknown data")
                 sec(a, b, "T", nm if nm and nm != "unknown.bin" else "unknown data")
@@ -291,6 +296,7 @@ def _pck_sections(blob, preview=False):
         "sn_end": sn_end,
         "scn_data_end": scn_data_end,
         "item_cnt": item_cnt,
+        "scene_script_ids": _scene_script_id_map(source_entries) if preview else {},
     }
     return secs, meta
 
@@ -342,7 +348,7 @@ def _flix_pck_sections(blob, preview=False):
     return secs, meta
 
 
-def _pck_original_sources(blob, h, scn_data_end):
+def _pck_original_source_entries(blob, h, scn_data_end):
     out = []
     try:
         os_hsz = int(h.get("original_source_header_size", 0) or 0)
@@ -379,9 +385,81 @@ def _pck_original_sources(blob, h, scn_data_end):
             nm = ""
         if not nm:
             nm = "unknown.bin"
-        out.append((str(nm), pos, pos + sz, len(raw), sha1(raw)))
+        out.append((str(nm), pos, pos + sz, bytes(raw or b"")))
         pos += sz
     return out
+
+
+def _pck_original_source_rows(entries):
+    return [(nm, a, b, len(raw), sha1(raw)) for nm, a, b, raw in entries]
+
+
+def _pck_original_sources(blob, h, scn_data_end):
+    return _pck_original_source_rows(
+        _pck_original_source_entries(blob, h, scn_data_end)
+    )
+
+
+def _read_scene_script_id(raw):
+    try:
+        line = bytes(raw or b"")[:1024].splitlines()[0]
+    except Exception:
+        return None
+    prefix = compiler.SCENE_SCRIPT_ID_PREFIX
+    if (not line.startswith(prefix)) or len(line) < len(prefix) + 4:
+        return None
+    value = line[len(prefix) : len(prefix) + 4]
+    if len(value) != 4 or any(b < 48 or b > 57 for b in value):
+        return None
+    return int(value)
+
+
+def _scene_script_id_keys(name):
+    out = []
+    for item in (str(name or ""), os.path.basename(str(name or ""))):
+        if not item:
+            continue
+        _stem, ext = os.path.splitext(item)
+        if ext.casefold() == ".ss" and item not in out:
+            out.append(item)
+    return out
+
+
+def _scene_script_id_map(source_entries):
+    out = {}
+    for name, _a, _b, raw in source_entries or []:
+        keys = _scene_script_id_keys(name)
+        if not keys:
+            continue
+        sid = _read_scene_script_id(raw)
+        if sid is None:
+            continue
+        for key in keys:
+            out.setdefault(key, sid)
+            out.setdefault(key.casefold(), sid)
+    return out
+
+
+def _scene_script_id_get(mapping, name):
+    if not isinstance(mapping, dict):
+        return None
+    for key in _scene_script_id_keys(name):
+        if key in mapping:
+            return mapping.get(key)
+        folded = key.casefold()
+        if folded in mapping:
+            return mapping.get(folded)
+    return None
+
+
+def _scene_script_id_text(sid):
+    return "%04d" % int(sid) if sid is not None else "-"
+
+
+def _scene_script_id_pair(left, right):
+    if left == right:
+        return _scene_script_id_text(left)
+    return _scene_script_id_text(left) + "/" + _scene_script_id_text(right)
 
 
 def _iter_pck_original_source_items(blob: bytes, hdr=None):
@@ -393,9 +471,6 @@ def _iter_pck_original_source_items(blob: bytes, hdr=None):
         hdr = parse_i32_header(blob, C.PACK_HDR_FIELDS, C.PACK_HDR_SIZE)
     if not hdr:
         return
-    orig_hsz = int(hdr.get("original_source_header_size", 0) or 0)
-    if orig_hsz <= 0:
-        return
     scn_data_idx = read_struct_list(
         blob,
         hdr.get("scn_data_index_list_ofs", 0),
@@ -405,30 +480,8 @@ def _iter_pck_original_source_items(blob: bytes, hdr=None):
     blob_end = hdr.get("scn_data_list_ofs", 0) + max(
         [a + b for a, b in scn_data_idx], default=0
     )
-    pos = int(blob_end)
-    if pos < 0 or pos + orig_hsz > len(blob):
-        return
-    ctx = {"source_angou": C.SOURCE_ANGOU}
-    try:
-        size_bytes, _ = source_angou_decrypt(blob[pos : pos + orig_hsz], ctx)
-    except Exception:
-        return
-    if not size_bytes or (len(size_bytes) % 4) != 0:
-        return
-    try:
-        sizes = list(struct.unpack("<" + "I" * (len(size_bytes) // 4), size_bytes))
-    except Exception:
-        return
-    pos += orig_hsz
-    for sz in sizes:
-        sz = int(sz) & 0xFFFFFFFF
-        if sz <= 0 or pos + sz > len(blob):
-            break
-        enc_blob = blob[pos : pos + sz]
-        pos += sz
-        try:
-            raw, name = source_angou_decrypt(enc_blob, ctx)
-        except Exception:
+    for name, _a, _b, raw in _pck_original_source_entries(blob, hdr, blob_end):
+        if name == "unknown.bin" and not raw:
             continue
         yield {"name": str(name or ""), "raw": bytes(raw or b"")}
 
@@ -984,7 +1037,7 @@ def pck(blob: bytes, input_pck: str = "") -> int:
             f"note: scene_data entries={meta.get('item_cnt', 0):d} (listing omitted; limit={MAX_SCENE_LIST:d})"
         )
     print()
-    print_sections(secs, len(blob))
+    print_sections(secs, len(blob), meta.get("scene_script_ids") or {})
     angou = _pck_angou_content(blob, input_pck=input_pck, hdr=h)
     if angou:
         print()
@@ -1091,6 +1144,28 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
 
     sm1 = _scene_map(names1, idx1, h1.get("scn_data_list_ofs", 0), b1)
     sm2 = _scene_map(names2, idx2, h2.get("scn_data_list_ofs", 0), b2)
+    source_entries1 = list(
+        _pck_original_source_entries(
+            b1, h1, h1.get("scn_data_list_ofs", 0) + max_pair_end(idx1)
+        )
+    )
+    source_entries2 = list(
+        _pck_original_source_entries(
+            b2, h2, h2.get("scn_data_list_ofs", 0) + max_pair_end(idx2)
+        )
+    )
+    sid1 = _scene_script_id_map(source_entries1)
+    sid2 = _scene_script_id_map(source_entries2)
+    show_ids = bool(sid1 or sid2)
+
+    def _id_sort_key(name):
+        sid = _scene_script_id_get(sid1, name)
+        if sid is None:
+            sid = _scene_script_id_get(sid2, name)
+        if sid is None:
+            return (0, str(name).casefold(), str(name))
+        return (1, int(sid), str(name).casefold(), str(name))
+
     exe_el1 = b""
     exe_el2 = b""
     pack_ctx1 = None
@@ -1111,7 +1186,7 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
         except Exception:
             pack_ctx2 = None
 
-    keys = sorted(set(sm1.keys()) | set(sm2.keys()), key=lambda x: x.lower())
+    keys = sorted(set(sm1.keys()) | set(sm2.keys()), key=_id_sort_key)
     rows = []
     payload_cmp_counts = {"same": 0, "text_only": 0, "real_diff": 0, "-": 0}
     payload_jobs = []
@@ -1122,7 +1197,12 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
         for i in range(m):
             r1 = l1[i] if i < len(l1) else None
             r2 = l2[i] if i < len(l2) else None
-            if r1 and r2 and (r1[1] - r1[0]) == (r2[1] - r2[0]) and r1[2] == r2[2]:
+            row_sid1 = _scene_script_id_get(sid1, k)
+            row_sid2 = _scene_script_id_get(sid2, k)
+            same_data = (
+                r1 and r2 and (r1[1] - r1[0]) == (r2[1] - r2[0]) and r1[2] == r2[2]
+            )
+            if same_data and row_sid1 == row_sid2:
                 continue
             s1z = (r1[1] - r1[0]) if r1 else 0
             s2z = (r2[1] - r2[0]) if r2 else 0
@@ -1131,9 +1211,15 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
             l1x = hx(r1[1] - 1) if r1 else "-"
             l2x = hx(r2[1] - 1) if r2 else "-"
             nm = k if i == 0 else f"{k}#{i:d}"
+            sid_text = _scene_script_id_pair(row_sid1, row_sid2)
             if compare_payload:
                 payload_cmp = "-"
-                if r1 and r2:
+                if same_data and r1 and r2:
+                    payload_cmp = "same"
+                    payload_cmp_counts[payload_cmp] = (
+                        int(payload_cmp_counts.get(payload_cmp, 0) or 0) + 1
+                    )
+                elif r1 and r2:
                     payload_jobs.append(
                         (
                             len(rows),
@@ -1152,9 +1238,9 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
                     payload_cmp_counts[payload_cmp] = (
                         int(payload_cmp_counts.get(payload_cmp, 0) or 0) + 1
                     )
-                rows.append((nm, st1, l1x, s1z, st2, l2x, s2z, payload_cmp))
+                rows.append((nm, st1, l1x, s1z, st2, l2x, s2z, sid_text, payload_cmp))
             else:
-                rows.append((nm, st1, l1x, s1z, st2, l2x, s2z))
+                rows.append((nm, st1, l1x, s1z, st2, l2x, s2z, sid_text))
     if compare_payload and payload_jobs:
         from .parallel import parallel_payload_compare
 
@@ -1169,12 +1255,8 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
             payload_cmp_counts[payload_cmp] = (
                 int(payload_cmp_counts.get(payload_cmp, 0) or 0) + 1
             )
-    os1 = _pck_original_sources(
-        b1, h1, h1.get("scn_data_list_ofs", 0) + max_pair_end(idx1)
-    )
-    os2 = _pck_original_sources(
-        b2, h2, h2.get("scn_data_list_ofs", 0) + max_pair_end(idx2)
-    )
+    os1 = _pck_original_source_rows(source_entries1)
+    os2 = _pck_original_source_rows(source_entries2)
 
     def _os_map(lst):
         m = {}
@@ -1184,7 +1266,7 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
 
     om1 = _os_map(os1)
     om2 = _os_map(os2)
-    okeys = sorted(set(om1.keys()) | set(om2.keys()), key=lambda x: x.lower())
+    okeys = sorted(set(om1.keys()) | set(om2.keys()), key=_id_sort_key)
     orows = []
     for k in okeys:
         l1 = om1.get(k, [])
@@ -1193,7 +1275,9 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
         for i in range(m):
             r1 = l1[i] if i < len(l1) else None
             r2 = l2[i] if i < len(l2) else None
-            if r1 and r2 and r1[2] == r2[2] and r1[3] == r2[3]:
+            row_sid1 = _scene_script_id_get(sid1, k)
+            row_sid2 = _scene_script_id_get(sid2, k)
+            if r1 and r2 and r1[2] == r2[2] and r1[3] == r2[3] and row_sid1 == row_sid2:
                 continue
             s1z = r1[2] if r1 else 0
             s2z = r2[2] if r2 else 0
@@ -1202,13 +1286,32 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
             a2 = hx(r2[0]) if r2 else "-"
             l2x = hx(r2[1] - 1) if r2 else "-"
             nm = k if i == 0 else f"{k}#{i:d}"
+            sid_text = _scene_script_id_pair(row_sid1, row_sid2)
             if compare_payload:
-                orows.append((nm, a1, l1x, s1z, a2, l2x, s2z, "-"))
+                orows.append((nm, a1, l1x, s1z, a2, l2x, s2z, sid_text, "-"))
             else:
-                orows.append((nm, a1, l1x, s1z, a2, l2x, s2z))
-    allrows = rows + orows
+                orows.append((nm, a1, l1x, s1z, a2, l2x, s2z, sid_text))
+
+    def _row_sort_key(row):
+        parts = []
+        for part in str(row[7] if len(row) > 7 else "-").split("/"):
+            if part == "-":
+                continue
+            try:
+                parts.append(int(part))
+            except Exception:
+                pass
+        name = str(row[0] if row else "")
+        if not parts:
+            return (0, name.casefold(), name)
+        return (1, min(parts), name.casefold(), name)
+
+    allrows = sorted(rows + orows, key=_row_sort_key) if show_ids else rows + orows
     if not allrows:
-        print("Sections: identical by (name,size,sha1)")
+        if show_ids:
+            print("Sections: identical by (name,size,sha1,id)")
+        else:
+            print("Sections: identical by (name,size,sha1)")
         if (not os1) and (not os2):
             print()
             print("Original sources: none")
@@ -1216,31 +1319,84 @@ def compare_pck(p1: str, p2: str, b1: bytes, b2: bytes, compare_payload=False) -
         print()
         print("Section differences:")
         if compare_payload:
-            print(
-                "START1      LAST1       SIZE1       START2      LAST2       SIZE2       PAYLOAD    %-*s"
-                % (C.NAME_W, "NAME")
-            )
-            print(
-                f"----------  ----------  ----------  ----------  ----------  ----------  ---------  {'-' * C.NAME_W}"
-            )
-            for nm, a1, l1x, s1z, a2, l2x, s2z, payload_cmp in allrows[:5000]:
+            if show_ids:
                 print(
-                    "%-10s  %-10s  %10d  %-10s  %-10s  %10d  %-9s  %-*s"
-                    % (a1, l1x, s1z, a2, l2x, s2z, payload_cmp, C.NAME_W, dn(nm))
+                    "START1      LAST1       SIZE1       START2      LAST2       SIZE2       ID         PAYLOAD    %-*s"
+                    % (C.NAME_W, "NAME")
                 )
+                print(
+                    f"----------  ----------  ----------  ----------  ----------  ----------  ---------  ---------  {'-' * C.NAME_W}"
+                )
+                for nm, a1, l1x, s1z, a2, l2x, s2z, sid_text, payload_cmp in allrows[
+                    :5000
+                ]:
+                    print(
+                        "%-10s  %-10s  %10d  %-10s  %-10s  %10d  %-9s  %-9s  %-*s"
+                        % (
+                            a1,
+                            l1x,
+                            s1z,
+                            a2,
+                            l2x,
+                            s2z,
+                            sid_text,
+                            payload_cmp,
+                            C.NAME_W,
+                            dn(nm),
+                        )
+                    )
+            else:
+                print(
+                    "START1      LAST1       SIZE1       START2      LAST2       SIZE2       PAYLOAD    %-*s"
+                    % (C.NAME_W, "NAME")
+                )
+                print(
+                    f"----------  ----------  ----------  ----------  ----------  ----------  ---------  {'-' * C.NAME_W}"
+                )
+                for nm, a1, l1x, s1z, a2, l2x, s2z, _sid_text, payload_cmp in allrows[
+                    :5000
+                ]:
+                    print(
+                        "%-10s  %-10s  %10d  %-10s  %-10s  %10d  %-9s  %-*s"
+                        % (
+                            a1,
+                            l1x,
+                            s1z,
+                            a2,
+                            l2x,
+                            s2z,
+                            payload_cmp,
+                            C.NAME_W,
+                            dn(nm),
+                        )
+                    )
         else:
-            print(
-                "START1      LAST1       SIZE1       START2      LAST2       SIZE2       %-*s"
-                % (C.NAME_W, "NAME")
-            )
-            print(
-                f"----------  ----------  ----------  ----------  ----------  ----------  {'-' * C.NAME_W}"
-            )
-            for nm, a1, l1x, s1z, a2, l2x, s2z in allrows[:5000]:
+            if show_ids:
                 print(
-                    "%-10s  %-10s  %10d  %-10s  %-10s  %10d  %-*s"
-                    % (a1, l1x, s1z, a2, l2x, s2z, C.NAME_W, dn(nm))
+                    "START1      LAST1       SIZE1       START2      LAST2       SIZE2       ID         %-*s"
+                    % (C.NAME_W, "NAME")
                 )
+                print(
+                    f"----------  ----------  ----------  ----------  ----------  ----------  ---------  {'-' * C.NAME_W}"
+                )
+                for nm, a1, l1x, s1z, a2, l2x, s2z, sid_text in allrows[:5000]:
+                    print(
+                        "%-10s  %-10s  %10d  %-10s  %-10s  %10d  %-9s  %-*s"
+                        % (a1, l1x, s1z, a2, l2x, s2z, sid_text, C.NAME_W, dn(nm))
+                    )
+            else:
+                print(
+                    "START1      LAST1       SIZE1       START2      LAST2       SIZE2       %-*s"
+                    % (C.NAME_W, "NAME")
+                )
+                print(
+                    f"----------  ----------  ----------  ----------  ----------  ----------  {'-' * C.NAME_W}"
+                )
+                for nm, a1, l1x, s1z, a2, l2x, s2z, _sid_text in allrows[:5000]:
+                    print(
+                        "%-10s  %-10s  %10d  %-10s  %-10s  %10d  %-*s"
+                        % (a1, l1x, s1z, a2, l2x, s2z, C.NAME_W, dn(nm))
+                    )
         if len(allrows) > 5000:
             print(f"... ({len(allrows) - 5000:d} rows omitted)")
         if compare_payload and rows:

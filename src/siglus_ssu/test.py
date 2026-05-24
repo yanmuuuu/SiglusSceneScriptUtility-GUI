@@ -149,12 +149,18 @@ def _payload_stdout(stdout_text: str) -> str:
     divider = ""
     in_table = False
     summary = []
+    payload_index = -1
     for line in str(stdout_text or "").splitlines():
         if "scene_data payload:" in line:
             summary.append(line)
             continue
         if "PAYLOAD" in line and "START1" in line:
             header = line
+            header_parts = header.split()
+            try:
+                payload_index = header_parts.index("PAYLOAD")
+            except ValueError:
+                payload_index = -1
             in_table = True
             continue
         if in_table and line.startswith("----------"):
@@ -162,10 +168,12 @@ def _payload_stdout(stdout_text: str) -> str:
             continue
         if not in_table:
             continue
-        parts = line.split(None, 7)
-        if len(parts) < 7:
+        if payload_index < 0:
             continue
-        payload = str(parts[6]).strip()
+        parts = line.split(None, payload_index + 1)
+        if len(parts) <= payload_index:
+            continue
+        payload = str(parts[payload_index]).strip()
         if payload in {"text_only", "real_diff", "diff", "-", "--", "unavailable"}:
             rows.append(line)
     lines = []

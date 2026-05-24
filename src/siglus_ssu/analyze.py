@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 from .common import (
     hx,
     fmt_ts,
@@ -23,6 +24,17 @@ from . import cgm
 from . import tcr
 
 SUPPORTED_TYPES = ("pck", "dat", "gan", "sav", "cgm", "tcr")
+
+
+def _backup_file(path):
+    base = path + ".bak"
+    out = base
+    i = 1
+    while os.path.exists(out):
+        out = f"{base}{i:d}"
+        i += 1
+    shutil.copy2(path, out)
+    return out
 
 
 def _fmt_key_txt(el: bytes) -> str:
@@ -205,10 +217,12 @@ def analyze_file(path, readall=False, apply=False):
                 print(f"apply_error: {e!s}")
                 return 1
             try:
+                backup = _backup_file(path)
                 with open(path, "wb") as f:
                     f.write(nb)
                 blob = nb
                 print(f"apply_txt: {txt}")
+                print(f"backup_written: {backup}")
                 print(f"apply_written: {path}")
                 for key in ("G", "Z", "cg_table", "bgm_table", "chrkoe"):
                     print(f"apply_{key}: {int(stats.get(key) or 0)}")
@@ -222,9 +236,11 @@ def analyze_file(path, readall=False, apply=False):
                 print(f"readall_error: {e!s}")
                 return 1
             try:
+                backup = _backup_file(path)
                 with open(path, "wb") as f:
                     f.write(nb)
                 blob = nb
+                print(f"backup_written: {backup}")
                 print(f"readall_written: {path}")
             except Exception as e:
                 print(f"write_error: {e!s}")
@@ -329,7 +345,7 @@ def main(argv=None):
             return 2
         return analyze_angou_dat(args[0])
     if gei:
-        if apply:
+        if readall or apply or compare_payload or _disam:
             return 2
         if len(args) == 1:
             return dat.analyze_gameexe_dat(args[0])

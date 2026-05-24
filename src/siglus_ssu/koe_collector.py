@@ -494,21 +494,6 @@ def _scan_calls(scene_root: str):
     return refs, scene_files
 
 
-def _rank_ovk_path(voice_dir: str, zname: str, path: str):
-    rel = os.path.relpath(path, voice_dir).replace("\\", "/").lower()
-    zl = zname.lower()
-    if rel == f"koe/{zl}":
-        return (0, rel)
-    if rel == zl:
-        return (1, rel)
-    if rel.endswith("/" + zl):
-        if rel.startswith("koe/"):
-            return (2, rel)
-        if re.fullmatch(r"\d{3}/" + re.escape(zl), rel):
-            return (3, rel)
-    return (4, rel)
-
-
 def _index_ovk(voice_dir: str):
     scene_map = {}
     entries = {}
@@ -524,7 +509,7 @@ def _index_ovk(voice_dir: str):
                 ovk_paths.append(e.path)
     elif os.path.isfile(voice_dir) and voice_dir.lower().endswith(".ovk"):
         ovk_paths.append(voice_dir)
-        voice_dir = os.path.dirname(voice_dir) or "."
+    ovk_paths.sort(key=lambda x: os.path.basename(x).lower())
     for ovk_idx, full in enumerate(ovk_paths, 1):
         fn = os.path.basename(full)
         _progress(f"koe: indexing ovk {ovk_idx}/{len(ovk_paths)}: {fn}")
@@ -534,13 +519,9 @@ def _index_ovk(voice_dir: str):
             continue
         z_files += 1
         scene_no = int(m.group(1))
-        zname = f"z{scene_no:04d}.ovk"
-        parent = os.path.basename(os.path.dirname(full))
-        chara = int(parent) if re.fullmatch(r"\d{3}", parent) else -1
+        chara = -1
         sm = scene_map.setdefault(scene_no, {})
-        if chara not in sm or _rank_ovk_path(voice_dir, zname, full) < _rank_ovk_path(
-            voice_dir, zname, sm[chara]
-        ):
+        if chara not in sm:
             sm[chara] = full
         try:
             table = sound.read_ovk_table(full)
@@ -570,16 +551,13 @@ def _index_ovk(voice_dir: str):
     )
 
 
-def _select_ovk(scene_map: dict, voice_dir: str, scene_no: int, chara_no: int):
+def _select_ovk(scene_map: dict, _voice_dir: str, scene_no: int, _chara_no: int):
     sm = scene_map.get(scene_no)
     if not sm:
         raise FileNotFoundError(f"Missing OVK for scene {scene_no:04d}")
-    if chara_no >= 0 and chara_no in sm:
-        return sm[chara_no]
     if -1 in sm:
         return sm[-1]
-    zname = f"z{scene_no:04d}.ovk"
-    return min(sm.values(), key=lambda p: _rank_ovk_path(voice_dir, zname, p))
+    return next(iter(sm.values()))
 
 
 def _format_duration(seconds: float) -> str:
