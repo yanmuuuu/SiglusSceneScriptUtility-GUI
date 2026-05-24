@@ -125,22 +125,23 @@ def _load_scene_data(ctx, scn_names, lzss_mode, max_workers=None, parallel=True)
         if not os.path.isfile(dat_path):
             raise FileNotFoundError(f"scene dat not found: {dat_path}")
         enc_names.append(nm)
+        dat = read_bytes(dat_path)
         if lzss_mode:
             lz_path = os.path.join(bs_dir, nm + ".lzss")
-            t = time.time()
-            if not easy_code:
-                raise RuntimeError("ctx.easy_angou_code is not set")
-            dat = read_bytes(dat_path)
-            lz = _m.lzss_pack(dat)
-            b = bytearray(lz)
-            xor_cycle_inplace(b, easy_code, 0)
-            lz = bytes(b)
-            write_bytes(lz_path, lz)
-            record_stage_time(ctx, "LZSS", time.time() - t)
-            log_stage("LZSS", nm + ".ss", ctx)
+            if os.path.isfile(lz_path):
+                lz = read_bytes(lz_path)
+            else:
+                t = time.time()
+                if not easy_code:
+                    raise RuntimeError("ctx.easy_angou_code is not set")
+                lz = _m.lzss_pack(dat)
+                b = bytearray(lz)
+                xor_cycle_inplace(b, easy_code, 0)
+                lz = bytes(b)
+                write_bytes(lz_path, lz)
+                record_stage_time(ctx, "LZSS", time.time() - t)
+                log_stage("LZSS", nm + ".ss", ctx)
             lzss_list.append(lz)
-        else:
-            dat = read_bytes(dat_path)
         dat_list.append(dat)
     return enc_names, dat_list, lzss_list
 

@@ -322,17 +322,29 @@ def parallel_lzss_compress(
             dat_list.append(dat)
             enc_names.append(nm)
         return (enc_names, dat_list, [])
-    tasks = [
-        (
-            nm,
-            os.path.join(bs_dir, nm + ".dat"),
-            os.path.join(bs_dir, nm + ".lzss"),
-            easy_code,
-        )
-        for nm in scn_names
-    ]
-    workers = get_max_workers(max_workers)
     results = {}
+    tasks = []
+    for nm in scn_names:
+        dat_path = os.path.join(bs_dir, nm + ".dat")
+        if not os.path.isfile(dat_path):
+            raise FileNotFoundError(f"scene dat not found: {dat_path}")
+        lz_path = os.path.join(bs_dir, nm + ".lzss")
+        dat = read_bytes(dat_path)
+        if os.path.isfile(lz_path):
+            results[nm] = (dat, read_bytes(lz_path))
+        else:
+            tasks.append((nm, dat_path, lz_path, easy_code))
+    if not tasks:
+        enc_names = []
+        dat_list = []
+        lzss_list = []
+        for nm in scn_names:
+            dat, lz = results[nm]
+            enc_names.append(nm)
+            dat_list.append(dat)
+            lzss_list.append(lz)
+        return (enc_names, dat_list, lzss_list)
+    workers = get_max_workers(max_workers)
     errors = []
     print(f"[PARALLEL] LZSS compressing {len(tasks)} scenes with {workers} workers...")
     with ThreadPoolExecutor(max_workers=workers) as executor:

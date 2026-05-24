@@ -312,7 +312,7 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 #### Notes
 
 - **Auto-encoding detection:** If `--charset` is not specified, the utility scans `.ss`, `.inc`, `.ini`, and `.dat` files for a UTF-8 BOM or kana/CJK characters. If found, `utf-8` is used; otherwise, `cp932` (Shift-JIS) is assumed.
-- **Incremental compilation:** When `--tmp` is specified, the compiler caches MD5 hashes of all `.ss` and `.inc` files. On the next run, only files whose hash has changed (or whose `.dat` is missing) are recompiled. If any `.inc` file changes, a full recompile is triggered.
+- **Incremental compilation:** When `--tmp` is specified, the compiler caches MD5 hashes of all `.ss` and `.inc` files. On the next run, only files whose hash has changed (or whose `.dat` is missing) are recompiled, and existing `.lzss` outputs are reused. If a scene source changes or its `.lzss` is missing, that scene's `.lzss` is regenerated. If any `.inc` file changes, a full recompile is triggered.
 - **Shuffle seed:** The compiler shuffles each `.dat` string table with an MSVC-compatible `rand()` seed. You do not need to match this for normal translation work — the engine reads strings correctly regardless of order. The `--set-shuffle` and `--test-shuffle` options are only needed if you want byte-for-byte identical binary output.
 
 ---
