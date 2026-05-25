@@ -178,7 +178,7 @@ def _compile_one_process(
     utf8: bool,
     debug_outputs: bool,
     display_name: str,
-) -> tuple[str, str | None, dict, dict]:
+) -> tuple[str, str | None, dict, dict, dict]:
     fname = os.path.basename(ss_path)
     nm = os.path.splitext(fname)[0]
     try:
@@ -207,9 +207,10 @@ def _compile_one_process(
             None,
             res.get("scene_macro_counts") or {},
             res.get("global_macro_usage_delta") or {},
+            res.get("source_stats") or {},
         )
     except Exception as e:
-        return (display_name, str(e), {}, {})
+        return (display_name, str(e), {}, {}, {})
 
 
 def parallel_compile(
@@ -217,13 +218,19 @@ def parallel_compile(
     ss_files: list[str],
     max_workers: int | None = None,
 ) -> dict:
-    from .BS import empty_macro_stat_counts, merge_macro_stat_counts
+    from .BS import (
+        empty_macro_stat_counts,
+        empty_source_stat_counts,
+        merge_macro_stat_counts,
+        merge_source_stat_counts,
+    )
 
     if not ss_files:
         return {
             "parallel": True,
             "scene_macro_counts": empty_macro_stat_counts(),
             "global_macro_usage_delta": {},
+            "source_stats": empty_source_stat_counts(),
         }
     workers = get_max_workers(max_workers)
     tmp_path = ctx.get("tmp_path") or "."
@@ -237,6 +244,7 @@ def parallel_compile(
     total = len(ss_files)
     scene_macro_counts = empty_macro_stat_counts()
     global_macro_usage_delta = {}
+    source_stats = empty_source_stat_counts()
     print(f"[PARALLEL] Compiling {total} files with {workers} processes...")
     with process_pool(workers) as executor:
         futures = [
@@ -253,13 +261,16 @@ def parallel_compile(
             for ss_path in ss_files
         ]
         for future in as_completed(futures):
-            display_name, error, macro_counts, usage_delta = future.result()
+            display_name, error, macro_counts, usage_delta, scene_source_stats = (
+                future.result()
+            )
             completed += 1
             if error:
                 errors.append((display_name, error))
                 print(f"  [{completed}/{total}] FAIL: {display_name}")
             else:
                 merge_macro_stat_counts(scene_macro_counts, macro_counts or {})
+                merge_source_stat_counts(source_stats, scene_source_stats or {})
                 for key, value in (usage_delta or {}).items():
                     global_macro_usage_delta[key] = int(
                         global_macro_usage_delta.get(key, 0) or 0
@@ -274,6 +285,7 @@ def parallel_compile(
         "parallel": True,
         "scene_macro_counts": scene_macro_counts,
         "global_macro_usage_delta": global_macro_usage_delta,
+        "source_stats": source_stats,
     }
 
 

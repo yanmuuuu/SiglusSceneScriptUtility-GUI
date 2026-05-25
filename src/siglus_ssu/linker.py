@@ -146,6 +146,57 @@ def _load_scene_data(ctx, scn_names, lzss_mode, max_workers=None, parallel=True)
     return enc_names, dat_list, lzss_list
 
 
+def _scn_header_from_bytes(blob):
+    if not isinstance(blob, (bytes, bytearray)) or len(blob) < C.SCN_HDR_SIZE:
+        return {}
+    fields = list(C.SCN_HDR_FIELDS or [])
+    if len(fields) * 4 != C.SCN_HDR_SIZE:
+        return {}
+    try:
+        vals = struct.unpack_from("<" + "i" * len(fields), blob, 0)
+    except struct.error:
+        return {}
+    return {fields[i]: int(vals[i]) for i in range(len(fields))}
+
+
+def _set_binary_size_stats(ctx, scn_names, dat_list, lzss_list, lzss_mode):
+    if not isinstance(ctx, dict):
+        return
+    total_dat = 0
+    total_scn = 0
+    total_lzss = 0
+    dat_rows = []
+    for i, name in enumerate(scn_names or []):
+        dat = dat_list[i] if i < len(dat_list or []) else b""
+        lz = lzss_list[i] if i < len(lzss_list or []) else b""
+        dat_size = len(dat or b"")
+        header = _scn_header_from_bytes(dat)
+        scn_size = int(header.get("scn_size", 0) or 0)
+        lzss_size = len(lz or b"") if lzss_mode else 0
+        total_dat += dat_size
+        total_scn += scn_size
+        total_lzss += lzss_size
+        dat_rows.append({"name": str(name or ""), "dat_bytes": dat_size})
+    dat_rows.sort(
+        key=lambda x: (
+            -int(x.get("dat_bytes", 0) or 0),
+            x["name"].casefold(),
+            x["name"],
+        )
+    )
+    stats = ctx.setdefault("stats", {})
+    stats["binary_size_stats"] = {
+        "lzss_mode": bool(lzss_mode),
+        "dat_bytes": total_dat,
+        "scn_bytes": total_scn,
+        "lzss_bytes": total_lzss,
+        "lzss_ratio": (float(total_lzss) / float(total_dat))
+        if total_dat and lzss_mode
+        else None,
+        "top_dat_scenes": dat_rows[:5],
+    }
+
+
 def _build_index_list_for_strings(strs):
     idx = []
     ofs_chars = 0
@@ -333,6 +384,7 @@ def link_pack(ctx):
     inc_command_cnt = int(iad.get("inc_command_cnt", len(inc_cmds)))
     scn_names_in = _get_scene_names(ctx)
     scn_names, dat_list, lzss_list = _load_scene_data(ctx, scn_names_in, lzss_mode)
+    _set_binary_size_stats(ctx, scn_names, dat_list, lzss_list, lzss_mode)
     scn_name_list = [nm.lower() for nm in scn_names]
     inc_prop_name_list = [str(p.get("name", "")) for p in inc_props]
     inc_cmd_name_list = [str(c.get("name", "")) for c in inc_cmds]

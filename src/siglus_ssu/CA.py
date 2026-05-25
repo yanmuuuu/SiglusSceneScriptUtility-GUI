@@ -159,16 +159,31 @@ class CharacterAnalizer:
         out = []
         inc = []
         inc_line_map = []
+        stats = {
+            "ifdef": 0,
+            "elseifdef": 0,
+            "else": 0,
+            "endif": 0,
+            "max_ifdef_depth": 0,
+            "excluded_lines": 0,
+            "inc_start": 0,
+            "inc_end": 0,
+        }
         self.m_line = 1
         st = 0
         ifs = [0] * 16
         d = 0
         incs = False
         i = 0
+        excluded_line = False
+
         while t[i] != "\0":
             c = t[i]
             source_line = self.m_line
             if c == "\n":
+                if excluded_line:
+                    stats["excluded_lines"] += 1
+                    excluded_line = False
                 if st in (1, 2, 3):
                     return self.error(
                         self.m_line, "Newline is not allowed inside single quotes."
@@ -226,9 +241,13 @@ class CharacterAnalizer:
                     if ok:
                         i, w, ok2 = self._check_word(t, j)
                         if ok2:
+                            stats["ifdef"] += 1
                             d += 1
                             if d >= 16:
                                 return self.error(self.m_line, "if depth overflow")
+                            stats["max_ifdef_depth"] = max(
+                                int(stats.get("max_ifdef_depth", 0) or 0), d
+                            )
                             mark_named_usage(self.iad, w)
                             ifs[d] = 1 if w in self.iad["name_set"] else 2
                             continue
@@ -238,6 +257,7 @@ class CharacterAnalizer:
                         if ifs[d] > 0:
                             i, w, ok2 = self._check_word(t, j)
                             if ok2:
+                                stats["elseifdef"] += 1
                                 ifs[d] = next_elseif_ifdef_state(
                                     ifs[d], w in self.iad["name_set"]
                                 )
@@ -252,6 +272,7 @@ class CharacterAnalizer:
                     j, ok = self._check_str(t, i, "#else")
                     if ok:
                         if ifs[d] > 0:
+                            stats["else"] += 1
                             i = j
                             ifs[d] = next_else_ifdef_state(ifs[d])
                             continue
@@ -261,6 +282,7 @@ class CharacterAnalizer:
                     j, ok = self._check_str(t, i, "#endif")
                     if ok:
                         if ifs[d] > 0:
+                            stats["endif"] += 1
                             d -= 1
                             i = j
                             continue
@@ -269,12 +291,14 @@ class CharacterAnalizer:
                         )
                     j, ok = self._check_str(t, i, "#inc_start")
                     if ok:
+                        stats["inc_start"] += 1
                         incs = True
                         i = j
                         continue
                     j, ok = self._check_str(t, i, "#inc_end")
                     if ok:
                         if incs:
+                            stats["inc_end"] += 1
                             incs = False
                             i = j
                             continue
@@ -295,7 +319,11 @@ class CharacterAnalizer:
                     inc.append(c)
                 else:
                     out.append(c)
+            else:
+                excluded_line = True
             i += 1
+        if excluded_line:
+            stats["excluded_lines"] += 1
         if st in (1, 2, 3):
             return self.error(self.m_line, "Unclosed single quote.")
         if st in (4, 5):
@@ -304,7 +332,7 @@ class CharacterAnalizer:
             return self.error(self.m_line, "Unclosed #inc_start.")
         if d > 0:
             return self.error(self.m_line, "Unclosed #ifdef.")
-        return "".join(out), "".join(inc), inc_line_map
+        return "".join(out), "".join(inc), inc_line_map, stats
 
     def _std_replace(self, text, pos, default_rt, added_rt):
         r1 = search_replace_tree(default_rt, text, pos) if default_rt else None
@@ -486,9 +514,16 @@ class CharacterAnalizer:
         r = self.analize_file_2(t1)
         if not isinstance(r, tuple):
             return 0
-        scn, inc, inc_line_map = r
+        scn, inc, inc_line_map = r[:3]
+        preprocess_stats = dict(r[3]) if len(r) >= 4 and isinstance(r[3], dict) else {}
         pcad["inc_text"] = inc
         pcad["inc_line_map"] = inc_line_map
+        if inc:
+            preprocess_stats["inc_lines"] = inc.count("\n") + (
+                0 if inc.endswith("\n") else 1
+            )
+        else:
+            preprocess_stats["inc_lines"] = 0
         iad2 = {"pt": [], "pl": [], "ct": [], "cl": []}
         from .IA import IncAnalyzer
 
@@ -496,6 +531,9 @@ class CharacterAnalizer:
         if not ia.step1():
             self.error(ia.el, "inc: " + ia.es)
             return 0
+        preprocess_stats["scene_inc_properties"] = len(iad2.get("pt") or [])
+        preprocess_stats["scene_inc_commands"] = len(iad2.get("ct") or [])
+        pcad["preprocess_stats"] = preprocess_stats
         if not ia.step2():
             self.error(ia.el, "inc: " + ia.es)
             return 0

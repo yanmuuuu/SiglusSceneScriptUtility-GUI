@@ -15,6 +15,7 @@ from .BS import (
     set_shuffle_seed,
     get_shuffle_seed,
     build_ia_data,
+    empty_source_stat_counts,
 )
 from .GEI import write_gameexe_dat
 from .linker import link_pack
@@ -395,6 +396,8 @@ def _init_stats(ctx):
     stats.setdefault("read_flags", None)
     stats.setdefault("read_flags_scenes", None)
     stats.setdefault("top5_read_flags_scenes", None)
+    stats.setdefault("source_stats", None)
+    stats.setdefault("binary_size_stats", None)
 
 
 def _macro_decl_kind(rep):
@@ -443,6 +446,12 @@ def _set_read_flag_stats(
     stats["read_flags"] = read_flags
     stats["read_flags_scenes"] = read_flags_scenes
     stats["top5_read_flags_scenes"] = top5_read_flags_scenes
+
+
+def _set_source_stats(ctx, source_stats):
+    if not isinstance(ctx, dict):
+        return
+    ctx.setdefault("stats", {})["source_stats"] = source_stats
 
 
 def _collect_macro_stats(ctx, compile_stats):
@@ -497,13 +506,212 @@ def _collect_read_flag_stats(bs_dir, scene_paths):
     return total, scene_total, scene_counts[:5]
 
 
+def _finalize_source_stats(ctx, compile_stats):
+    if not isinstance(ctx, dict) or not isinstance(compile_stats, dict):
+        return None
+    source_stats = compile_stats.get("source_stats")
+    if not isinstance(source_stats, dict):
+        return None
+    iad = ctx.get("ia_data") if isinstance(ctx.get("ia_data"), dict) else {}
+    directives = source_stats.setdefault("directives", {})
+    global_props = int((iad or {}).get("inc_property_cnt", 0) or 0)
+    global_cmds = int((iad or {}).get("inc_command_cnt", 0) or 0)
+    scene_props = int(directives.get("scene_inc_properties", 0) or 0)
+    scene_cmds = int(directives.get("scene_inc_commands", 0) or 0)
+    directives["global_inc_properties"] = global_props
+    directives["global_inc_commands"] = global_cmds
+    directives["property_directives_total"] = global_props + scene_props
+    directives["command_directives_total"] = global_cmds + scene_cmds
+    strings = source_stats.setdefault("strings", {})
+    strings["unique"] = len(source_stats.get("_unique_strings") or set())
+    strings["unique_speaker_names"] = len(source_stats.get("_unique_speakers") or set())
+    return source_stats
+
+
+def _sorted_counter_text(counter, sep="="):
+    if not isinstance(counter, dict) or not counter:
+        return "none"
+    items = sorted(counter.items(), key=lambda item: str(item[0]))
+    return " ".join(f"{name}{sep}{int(count or 0)}" for name, count in items)
+
+
+def _filtered_counter_text(counter, exclude, sep="="):
+    if not isinstance(counter, dict) or not counter:
+        return "none"
+    excluded = set(exclude or ())
+    return _sorted_counter_text(
+        {k: v for k, v in counter.items() if k not in excluded}, sep
+    )
+
+
+def _top_scene_text(items, value_key, extra_key=None, limit=5):
+    if not isinstance(items, list) or not items:
+        return "none"
+    rows = sorted(
+        [x for x in items if isinstance(x, dict)],
+        key=lambda item: (
+            -int(item.get(value_key, 0) or 0),
+            str(item.get("name", "")).casefold(),
+            str(item.get("name", "")),
+        ),
+    )
+    out = []
+    for item in rows[:limit]:
+        name = str(item.get("name", ""))
+        value = int(item.get(value_key, 0) or 0)
+        if extra_key:
+            out.append(
+                f"{name}({value}, {extra_key}={int(item.get(extra_key, 0) or 0)})"
+            )
+        else:
+            out.append(f"{name}({value})")
+    return ", ".join(out) if out else "none"
+
+
+def _print_source_stats(source_stats):
+    if not isinstance(source_stats, dict):
+        return
+    directives = source_stats.get("directives") or {}
+    pre = source_stats.get("preprocess") or {}
+    inc = source_stats.get("inc") or {}
+    strings = source_stats.get("strings") or {}
+    statements = source_stats.get("statements") or {}
+    labels = source_stats.get("labels") or {}
+    expressions = source_stats.get("expressions") or {}
+    print(
+        "#property: "
+        f"global={int(directives.get('global_inc_properties', 0) or 0)} "
+        f"scene_local={int(directives.get('scene_inc_properties', 0) or 0)}"
+    )
+    print(
+        "#command: "
+        f"global={int(directives.get('global_inc_commands', 0) or 0)} "
+        f"scene_local={int(directives.get('scene_inc_commands', 0) or 0)} "
+        f"global_impl={int(directives.get('global_command_implementations', 0) or 0)} "
+        f"scene_defs={int(directives.get('scene_command_definitions', 0) or 0)}"
+    )
+    print(
+        "preprocessor: "
+        f"ifdef={int(pre.get('ifdef', 0) or 0)} "
+        f"elseifdef={int(pre.get('elseifdef', 0) or 0)} "
+        f"else={int(pre.get('else', 0) or 0)} "
+        f"endif={int(pre.get('endif', 0) or 0)} "
+        f"max_depth={int(pre.get('max_ifdef_depth', 0) or 0)} "
+        f"excluded_lines={int(pre.get('excluded_lines', 0) or 0)}"
+    )
+    print(
+        "inc_blocks: "
+        f"start={int(inc.get('blocks', 0) or 0)} "
+        f"end={int(inc.get('ends', 0) or 0)} "
+        f"lines={int(inc.get('lines', 0) or 0)}"
+    )
+    print(
+        "labels: "
+        f"defs={int(labels.get('defs', 0) or 0)} "
+        f"refs={int(labels.get('refs', 0) or 0)} "
+        f"unused={int(labels.get('unused', 0) or 0)} "
+        f"z_defs={int(labels.get('z_defs', 0) or 0)} "
+        f"z_refs={int(labels.get('z_refs', 0) or 0)} "
+        f"z_unused={int(labels.get('z_unused', 0) or 0)} "
+        f"generated={int(labels.get('generated', 0) or 0)}"
+    )
+    print(
+        "statements: "
+        + _filtered_counter_text(
+            statements,
+            (
+                "assign",
+                "command_def",
+                "eof",
+                "label",
+                "name",
+                "text",
+                "z_label",
+            ),
+        )
+    )
+    print(
+        "expressions: "
+        f"max_depth={int(expressions.get('max_depth', 0) or 0)} "
+        f"named_args={int(expressions.get('named_args', 0) or 0)} "
+        f"default_arg_fills={int(expressions.get('default_arg_fills', 0) or 0)}"
+    )
+    print(
+        "assign_ops: " + _sorted_counter_text(expressions.get("assign_ops") or {}, ":")
+    )
+    print(
+        "unary_ops: "
+        + _sorted_counter_text(expressions.get("unary_op_kinds") or {}, ":")
+    )
+    print(
+        "binary_ops: "
+        + _sorted_counter_text(expressions.get("binary_op_kinds") or {}, ":")
+    )
+    print(
+        "strings: "
+        f"entries={int(strings.get('entries', 0) or 0)} "
+        f"unique={int(strings.get('unique', 0) or 0)} "
+        f"utf16_units={int(strings.get('utf16_units', 0) or 0)}"
+    )
+    print(
+        "dialogue: "
+        f"text_lines={int(strings.get('dialogue_text_lines', 0) or 0)} "
+        f"speaker_names={int(strings.get('speaker_names', 0) or 0)} "
+        f"unique_speaker_names={int(strings.get('unique_speaker_names', 0) or 0)}"
+    )
+
+
+def _print_binary_size_stats(binary_stats):
+    if not isinstance(binary_stats, dict):
+        return
+    dat_bytes = int(binary_stats.get("dat_bytes", 0) or 0)
+    lzss_bytes = int(binary_stats.get("lzss_bytes", 0) or 0)
+    ratio = binary_stats.get("lzss_ratio")
+    ratio_text = f"{float(ratio):.3f}" if ratio is not None else "n/a"
+    print(
+        "binary_sizes: "
+        f"dat_bytes={dat_bytes} "
+        f"scn_bytes={int(binary_stats.get('scn_bytes', 0) or 0)} "
+        f"lzss_bytes={lzss_bytes} "
+        f"lzss_ratio={ratio_text}"
+    )
+
+
+def _print_top_stats(stats):
+    if not isinstance(stats, dict):
+        return
+    macro_counts = stats.get("macro_counts")
+    if isinstance(macro_counts, dict):
+        top5 = stats.get("top5_read_flags_scenes")
+        if isinstance(top5, list) and top5:
+            print(
+                "top5_read_flags_scenes: "
+                + ", ".join(f"{name}({int(count or 0)})" for name, count in top5)
+            )
+        else:
+            print("top5_read_flags_scenes: none")
+    source_stats = stats.get("source_stats")
+    if isinstance(source_stats, dict):
+        strings = source_stats.get("strings") or {}
+        print(
+            "top5_string_pool_scenes: "
+            + _top_scene_text(strings.get("top_scenes") or [], "utf16_units", "entries")
+        )
+    binary_stats = stats.get("binary_size_stats")
+    if isinstance(binary_stats, dict):
+        print(
+            "top5_dat_scenes: "
+            + _top_scene_text(binary_stats.get("top_dat_scenes") or [], "dat_bytes")
+        )
+
+
 def _record_angou(ctx, content):
     if not isinstance(ctx, dict):
         return
     ctx.setdefault("stats", {})["angou_content"] = content
 
 
-def _print_summary(ctx):
+def _print_summary(ctx, ok=False):
     stats = ctx.get("stats") if isinstance(ctx, dict) else None
     if not isinstance(stats, dict):
         return
@@ -522,29 +730,21 @@ def _print_summary(ctx):
         print(f"inc_files: {int(stats.get('inc_files', 0) or 0)}")
         print(f"scene_files: {int(stats.get('scene_files', 0) or 0)}")
         print(f"compiled_scene_files: {int(stats.get('compiled_scene_files', 0) or 0)}")
-        macro_counts = stats.get("macro_counts")
-        if isinstance(macro_counts, dict):
-            for kind in MACRO_STAT_KINDS:
-                bucket = macro_counts.get(kind) or {}
+        if ok and bool(stats.get("full_compile_stats")):
+            macro_counts = stats.get("macro_counts")
+            if isinstance(macro_counts, dict):
+                for kind in MACRO_STAT_KINDS:
+                    bucket = macro_counts.get(kind) or {}
+                    print(
+                        f"#{kind}: total={int(bucket.get('total', 0) or 0)} unused={int(bucket.get('unused', 0) or 0)}"
+                    )
+                print(f"read_flags: {int(stats.get('read_flags', 0) or 0)}")
                 print(
-                    f"#{kind}: total={int(bucket.get('total', 0) or 0)} unused={int(bucket.get('unused', 0) or 0)}"
+                    f"read_flags_scenes: {int(stats.get('read_flags_scenes', 0) or 0)}"
                 )
-            print(f"read_flags: {int(stats.get('read_flags', 0) or 0)}")
-            print(f"read_flags_scenes: {int(stats.get('read_flags_scenes', 0) or 0)}")
-            top5 = stats.get("top5_read_flags_scenes")
-            if isinstance(top5, list) and top5:
-                print(
-                    "top5_read_flags_scenes: "
-                    + ", ".join(f"{name}({int(count or 0)})" for name, count in top5)
-                )
-            else:
-                print("top5_read_flags_scenes: none")
-        elif not bool(stats.get("full_compile_stats")):
-            for kind in MACRO_STAT_KINDS:
-                print(f"#{kind}: n/a (incremental compile)")
-            print("read_flags: n/a (incremental compile)")
-            print("read_flags_scenes: n/a (incremental compile)")
-            print("top5_read_flags_scenes: n/a (incremental compile)")
+                _print_source_stats(stats.get("source_stats"))
+                _print_binary_size_stats(stats.get("binary_size_stats"))
+                _print_top_stats(stats)
     if angou is not None:
         print("=== \u6697\u53f7.dat ===")
         print(angou)
@@ -781,6 +981,7 @@ def main(argv=None):
         "parallel": False,
         "scene_macro_counts": _empty_macro_counts(),
         "global_macro_usage_delta": {},
+        "source_stats": empty_source_stat_counts(),
     }
     try:
         t = time.time()
@@ -904,6 +1105,7 @@ def main(argv=None):
                 compile_list = ss
             full_compile_stats = (
                 (not getattr(a, "dat_repack", False))
+                and not getattr(a, "tmp_dir", "")
                 and (not test_shuffle)
                 and bool(ss)
                 and len(compile_list) == len(ss)
@@ -1038,6 +1240,7 @@ def main(argv=None):
                     )
             if full_compile_stats:
                 _set_macro_stats(ctx, _collect_macro_stats(ctx, compile_stats))
+                _set_source_stats(ctx, _finalize_source_stats(ctx, compile_stats))
                 bs_dir = os.path.join(tmp, "bs")
                 (
                     read_flags,
@@ -1052,6 +1255,7 @@ def main(argv=None):
                 )
             else:
                 _set_macro_stats(ctx, None)
+                _set_source_stats(ctx, None)
                 _set_read_flag_stats(ctx, None, None, None)
             link_pack(ctx)
         ok = True
@@ -1062,7 +1266,7 @@ def main(argv=None):
         sys.stderr.write(msg + "\n")
         ok = False
     finally:
-        _print_summary(ctx)
+        _print_summary(ctx, ok=ok)
         if ok and (not a.debug) and tmp and tmp_auto:
             shutil.rmtree(tmp, ignore_errors=True)
     return 0 if ok else 1

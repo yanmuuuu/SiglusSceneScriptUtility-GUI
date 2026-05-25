@@ -3,6 +3,7 @@ import glob
 import struct
 import copy
 import time
+from collections import Counter
 from ._const_manager import get_const_module
 from .CA import CharacterAnalizer, copy_replace_tree, new_replace_tree
 from .IA import IncAnalyzer
@@ -11,6 +12,7 @@ from .SA import SA
 from .MA import MA
 from .common import (
     build_empty_ia_data,
+    build_operator_render_tables,
     format_scene_name,
     log_stage,
     record_stage_time,
@@ -145,6 +147,33 @@ def copy_ia_data(base):
 _MACRO_STAT_KINDS = ("replace", "define", "define_s", "macro")
 
 
+def _op_code(atom):
+    atom = atom if isinstance(atom, dict) else {}
+    try:
+        return int(atom.get("opt", -1))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _operator_symbol(atom, unary, operator_tables):
+    tables = operator_tables or build_operator_render_tables()
+    table = tables[2] if unary else tables[3]
+    op = _op_code(atom)
+    text = table.get(op)
+    return str(text) if text is not None else str(op)
+
+
+def _assign_operator_symbol(atom, operator_tables):
+    op = _op_code(atom)
+    try:
+        if op == int(getattr(C, "OP_NONE", -1)):
+            return "="
+    except (TypeError, ValueError):
+        pass
+    text = _operator_symbol(atom, False, operator_tables)
+    return text + "=" if text != str(op) else text
+
+
 def empty_macro_stat_counts():
     return {kind: {"total": 0, "unused": 0} for kind in _MACRO_STAT_KINDS}
 
@@ -162,6 +191,462 @@ def merge_macro_stat_counts(dst, src):
             other.get("unused", 0) or 0
         )
     return dst
+
+
+def _merge_counter_map(dst, src):
+    if not isinstance(dst, dict) or not isinstance(src, dict):
+        return dst
+    for k, v in src.items():
+        dst[k] = int(dst.get(k, 0) or 0) + int(v or 0)
+    return dst
+
+
+def _merge_int_section(dst, src, keys):
+    if not isinstance(dst, dict) or not isinstance(src, dict):
+        return dst
+    for k in keys:
+        dst[k] = int(dst.get(k, 0) or 0) + int(src.get(k, 0) or 0)
+    return dst
+
+
+def empty_source_stat_counts():
+    return {
+        "scene_count": 0,
+        "preprocess": {
+            "ifdef": 0,
+            "elseifdef": 0,
+            "else": 0,
+            "endif": 0,
+            "max_ifdef_depth": 0,
+            "excluded_lines": 0,
+        },
+        "inc": {
+            "blocks": 0,
+            "ends": 0,
+            "lines": 0,
+            "scene_properties": 0,
+            "scene_commands": 0,
+        },
+        "directives": {
+            "global_inc_properties": 0,
+            "global_inc_commands": 0,
+            "scene_inc_properties": 0,
+            "scene_inc_commands": 0,
+            "property_directives_total": 0,
+            "command_directives_total": 0,
+            "command_definitions": 0,
+            "global_command_implementations": 0,
+            "scene_command_definitions": 0,
+        },
+        "strings": {
+            "entries": 0,
+            "utf16_units": 0,
+            "dialogue_text_lines": 0,
+            "speaker_names": 0,
+            "top_scenes": [],
+        },
+        "statements": Counter(),
+        "labels": {
+            "defs": 0,
+            "refs": 0,
+            "unused": 0,
+            "z_defs": 0,
+            "z_refs": 0,
+            "z_unused": 0,
+            "generated": 0,
+        },
+        "expressions": {
+            "unary_ops": 0,
+            "binary_ops": 0,
+            "max_depth": 0,
+            "named_args": 0,
+            "default_arg_fills": 0,
+            "assign_ops": {},
+            "unary_op_kinds": {},
+            "binary_op_kinds": {},
+        },
+        "_unique_strings": set(),
+        "_unique_speakers": set(),
+    }
+
+
+def merge_source_stat_counts(dst, src):
+    if not isinstance(dst, dict):
+        dst = empty_source_stat_counts()
+    if not isinstance(src, dict):
+        return dst
+    dst["scene_count"] = int(dst.get("scene_count", 0) or 0) + int(
+        src.get("scene_count", 0) or 0
+    )
+    dp = dst.setdefault("preprocess", {})
+    sp = src.get("preprocess") or {}
+    _merge_int_section(
+        dp, sp, ("ifdef", "elseifdef", "else", "endif", "excluded_lines")
+    )
+    dp["max_ifdef_depth"] = max(
+        int(dp.get("max_ifdef_depth", 0) or 0),
+        int(sp.get("max_ifdef_depth", 0) or 0),
+    )
+    _merge_int_section(
+        dst.setdefault("inc", {}),
+        src.get("inc") or {},
+        ("blocks", "ends", "lines", "scene_properties", "scene_commands"),
+    )
+    _merge_int_section(
+        dst.setdefault("directives", {}),
+        src.get("directives") or {},
+        (
+            "global_inc_properties",
+            "global_inc_commands",
+            "scene_inc_properties",
+            "scene_inc_commands",
+            "property_directives_total",
+            "command_directives_total",
+            "command_definitions",
+            "global_command_implementations",
+            "scene_command_definitions",
+        ),
+    )
+    ds = dst.setdefault("strings", {})
+    ss = src.get("strings") or {}
+    _merge_int_section(
+        ds, ss, ("entries", "utf16_units", "dialogue_text_lines", "speaker_names")
+    )
+    ds.setdefault("top_scenes", []).extend(list(ss.get("top_scenes") or []))
+    _merge_counter_map(dst.setdefault("statements", {}), src.get("statements") or {})
+    _merge_int_section(
+        dst.setdefault("labels", {}),
+        src.get("labels") or {},
+        ("defs", "refs", "unused", "z_defs", "z_refs", "z_unused", "generated"),
+    )
+    de = dst.setdefault("expressions", {})
+    se = src.get("expressions") or {}
+    _merge_int_section(
+        de, se, ("unary_ops", "binary_ops", "named_args", "default_arg_fills")
+    )
+    de["max_depth"] = max(
+        int(de.get("max_depth", 0) or 0), int(se.get("max_depth", 0) or 0)
+    )
+    _merge_counter_map(de.setdefault("assign_ops", {}), se.get("assign_ops") or {})
+    _merge_counter_map(
+        de.setdefault("unary_op_kinds", {}), se.get("unary_op_kinds") or {}
+    )
+    _merge_counter_map(
+        de.setdefault("binary_op_kinds", {}), se.get("binary_op_kinds") or {}
+    )
+    dst.setdefault("_unique_strings", set()).update(src.get("_unique_strings") or set())
+    dst.setdefault("_unique_speakers", set()).update(
+        src.get("_unique_speakers") or set()
+    )
+    return dst
+
+
+def _u16_len(text):
+    return len(str(text or "").encode("utf-16le", "surrogatepass")) // 2
+
+
+def _string_for_atom(plad, atom):
+    if not isinstance(atom, dict):
+        return ""
+    try:
+        idx = int(atom.get("opt", -1))
+    except (TypeError, ValueError):
+        return ""
+    sl = (plad or {}).get("str_list") or []
+    return str(sl[idx]) if 0 <= idx < len(sl) else ""
+
+
+def _inc_counter(mapping, key, amount=1):
+    if not key:
+        key = "<unknown>"
+    mapping[key] = int(mapping.get(key, 0) or 0) + int(amount or 0)
+
+
+def _scn_header_from_bytes(blob):
+    if not isinstance(blob, (bytes, bytearray)) or len(blob) < C.SCN_HDR_SIZE:
+        return {}
+    fields = list(C.SCN_HDR_FIELDS or [])
+    if len(fields) * 4 != C.SCN_HDR_SIZE:
+        return {}
+    try:
+        vals = struct.unpack_from("<" + "i" * len(fields), blob, 0)
+    except struct.error:
+        return {}
+    return {fields[i]: int(vals[i]) for i in range(len(fields))}
+
+
+def _block_sentences(block):
+    if isinstance(block, dict):
+        if isinstance(block.get("sentense_list"), list):
+            return list(block.get("sentense_list") or [])
+        if isinstance(block.get("sentense"), list):
+            return list(block.get("sentense") or [])
+        if "block" in block:
+            return _block_sentences(block.get("block"))
+    if isinstance(block, list):
+        return list(block)
+    return []
+
+
+def _exp_depth(node):
+    if not isinstance(node, dict):
+        return 0
+    nt = node.get("node_type")
+    if nt == C.NT_EXP_OPR1:
+        return 1 + _exp_depth(node.get("exp_1"))
+    if nt == C.NT_EXP_OPR2:
+        return 1 + max(_exp_depth(node.get("exp_1")), _exp_depth(node.get("exp_2")))
+    if nt == C.NT_EXP_SIMPLE:
+        return _exp_depth(node.get("smp_exp"))
+    if nt == C.NT_SMP_KAKKO:
+        return 1 + _exp_depth(node.get("exp"))
+    if nt == C.NT_SMP_EXP_LIST:
+        return 1 + max(
+            [_exp_depth(x) for x in ((node.get("exp_list") or {}).get("exp") or [])]
+            or [0]
+        )
+    if nt in (C.NT_SMP_GOTO, C.NT_SMP_ELM_EXP, C.NT_SMP_LITERAL):
+        return 1
+    return 0
+
+
+def _collect_statement_stats(root, plad, stats, inc_command_cnt):
+    strings = stats["strings"]
+    statements = stats["statements"]
+    directives = stats["directives"]
+    expressions = stats["expressions"]
+    operator_tables = build_operator_render_tables()
+
+    def visit_block(block):
+        for sen in _block_sentences(block):
+            visit_sentence(sen)
+
+    def visit_sentence(sen):
+        if not isinstance(sen, dict):
+            return
+        nt = sen.get("node_type")
+        if nt == C.NT_S_LABEL:
+            statements["label"] += 1
+            return
+        if nt == C.NT_S_Z_LABEL:
+            statements["z_label"] += 1
+            return
+        if nt == C.NT_S_DEF_PROP:
+            statements["property_def"] += 1
+            return
+        if nt == C.NT_S_DEF_CMD:
+            statements["command_def"] += 1
+            directives["command_definitions"] += 1
+            node = sen.get("def_cmd") or {}
+            try:
+                cmd_id = int(node.get("cmd_id", -1))
+            except (TypeError, ValueError):
+                cmd_id = -1
+            if 0 <= cmd_id < int(inc_command_cnt or 0):
+                directives["global_command_implementations"] += 1
+            else:
+                directives["scene_command_definitions"] += 1
+            visit_block(node.get("block"))
+            return
+        if nt == C.NT_S_GOTO:
+            gt = sen.get("Goto") or {}
+            gnt = gt.get("node_type")
+            if gnt == C.NT_GOTO_GOSUB:
+                statements["gosub"] += 1
+            elif gnt == C.NT_GOTO_GOSUBSTR:
+                statements["gosubstr"] += 1
+            else:
+                statements["goto"] += 1
+            return
+        if nt == C.NT_S_RETURN:
+            statements["return"] += 1
+            return
+        if nt == C.NT_S_IF:
+            statements["if"] += 1
+            for sub in (sen.get("If") or {}).get("sub", []) or []:
+                at = ((sub.get("If") or {}).get("atom") or {}) if sub else {}
+                if at.get("type") == C.LA_T["ELSEIF"]:
+                    statements["elseif"] += 1
+                elif at.get("type") == C.LA_T["ELSE"]:
+                    statements["else"] += 1
+                visit_block(sub.get("block") if isinstance(sub, dict) else None)
+            return
+        if nt == C.NT_S_FOR:
+            statements["for"] += 1
+            node = sen.get("For") or {}
+            visit_block(node.get("init"))
+            visit_block(node.get("loop"))
+            visit_block(node.get("block"))
+            return
+        if nt == C.NT_S_WHILE:
+            statements["while"] += 1
+            visit_block((sen.get("While") or {}).get("block"))
+            return
+        if nt == C.NT_S_CONTINUE:
+            statements["continue"] += 1
+            return
+        if nt == C.NT_S_BREAK:
+            statements["break"] += 1
+            return
+        if nt == C.NT_S_SWITCH:
+            statements["switch"] += 1
+            sw = sen.get("Switch") or {}
+            for cs in sw.get("case", []) or []:
+                statements["case"] += 1
+                visit_block(cs.get("block") if isinstance(cs, dict) else None)
+            if sw.get("Default"):
+                statements["default"] += 1
+                visit_block((sw.get("Default") or {}).get("block"))
+            return
+        if nt == C.NT_S_ASSIGN:
+            statements["assign"] += 1
+            assign = sen.get("assign") or {}
+            _inc_counter(
+                expressions["assign_ops"],
+                _assign_operator_symbol(
+                    ((assign.get("equal") or {}).get("atom") or {}), operator_tables
+                ),
+            )
+            return
+        if nt == C.NT_S_COMMAND:
+            statements["command_call"] += 1
+            return
+        if nt == C.NT_S_TEXT:
+            statements["text"] += 1
+            strings["dialogue_text_lines"] += 1
+            return
+        if nt == C.NT_S_NAME:
+            statements["name"] += 1
+            name = _string_for_atom(
+                plad, ((sen.get("name") or {}).get("name") or {}).get("atom") or {}
+            )
+            strings["speaker_names"] += 1
+            if name:
+                stats.setdefault("_unique_speakers", set()).add(name)
+            return
+        if nt == C.NT_S_EOF:
+            statements["eof"] += 1
+
+    visit_block(root)
+
+
+def _collect_tree_stats(root, stats):
+    expressions = stats["expressions"]
+    operator_tables = build_operator_render_tables()
+
+    def visit(node):
+        if isinstance(node, dict):
+            nt = node.get("node_type")
+            if nt == C.NT_EXP_OPR1:
+                expressions["unary_ops"] += 1
+                _inc_counter(
+                    expressions["unary_op_kinds"],
+                    _operator_symbol(
+                        ((node.get("opr") or {}).get("atom") or {}),
+                        True,
+                        operator_tables,
+                    ),
+                )
+            elif nt == C.NT_EXP_OPR2:
+                expressions["binary_ops"] += 1
+                _inc_counter(
+                    expressions["binary_op_kinds"],
+                    _operator_symbol(
+                        ((node.get("opr") or {}).get("atom") or {}),
+                        False,
+                        operator_tables,
+                    ),
+                )
+            if nt in (C.NT_EXP_SIMPLE, C.NT_EXP_OPR1, C.NT_EXP_OPR2):
+                expressions["max_depth"] = max(
+                    int(expressions.get("max_depth", 0) or 0), _exp_depth(node)
+                )
+            if "named_arg_cnt" in node and isinstance(node.get("arg"), list):
+                expressions["named_args"] += int(node.get("named_arg_cnt", 0) or 0)
+            for key, value in node.items():
+                if key in ("atom", "_elm_chain"):
+                    continue
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(root)
+
+
+def _collect_label_stats(plad, mad, header, stats):
+    info = (mad or {}).get("ma_label_info") or {}
+    defs = set(int(k) for k in (info.get("def") or {}).keys())
+    zdefs = set(int(k) for k in (info.get("zdef") or {}).keys())
+    label_refs = []
+    z_refs = []
+    for item in info.get("goto") or []:
+        if not isinstance(item, dict):
+            continue
+        if "z" in item:
+            z_refs.append(int(item.get("z", -1)))
+        elif "label" in item:
+            label_refs.append(int(item.get("label", -1)))
+    for item in info.get("lit") or []:
+        if isinstance(item, dict):
+            label_refs.append(int(item.get("label", -1)))
+    labels = stats["labels"]
+    labels["defs"] += len(defs)
+    labels["refs"] += len(label_refs)
+    labels["unused"] += len(defs - set(label_refs))
+    labels["z_defs"] += len(zdefs)
+    labels["z_refs"] += len(z_refs)
+    labels["z_unused"] += len((zdefs - {0}) - set(z_refs))
+    source_label_slots = len((plad or {}).get("label_list") or [])
+    try:
+        label_cnt = int((header or {}).get("label_cnt", 0) or 0)
+    except (TypeError, ValueError):
+        label_cnt = 0
+    labels["generated"] += max(0, label_cnt - source_label_slots)
+
+
+def collect_scene_source_stats(nm, pcad, plad, psad, pbsd, piad, dat_bytes):
+    stats = empty_source_stat_counts()
+    stats["scene_count"] = 1
+    pre = (pcad or {}).get("preprocess_stats") or {}
+    out_pre = stats["preprocess"]
+    for key in ("ifdef", "elseifdef", "else", "endif", "excluded_lines"):
+        out_pre[key] = int(pre.get(key, 0) or 0)
+    out_pre["max_ifdef_depth"] = int(pre.get("max_ifdef_depth", 0) or 0)
+    inc = stats["inc"]
+    inc["blocks"] = int(pre.get("inc_start", 0) or 0)
+    inc["ends"] = int(pre.get("inc_end", 0) or 0)
+    inc["lines"] = int(pre.get("inc_lines", 0) or 0)
+    inc["scene_properties"] = int(pre.get("scene_inc_properties", 0) or 0)
+    inc["scene_commands"] = int(pre.get("scene_inc_commands", 0) or 0)
+    directives = stats["directives"]
+    directives["scene_inc_properties"] = inc["scene_properties"]
+    directives["scene_inc_commands"] = inc["scene_commands"]
+    directives["property_directives_total"] = inc["scene_properties"]
+    directives["command_directives_total"] = inc["scene_commands"]
+    strings = list((plad or {}).get("str_list") or [])
+    utf16_units = sum(_u16_len(x) for x in strings)
+    stats["strings"]["entries"] = len(strings)
+    stats["strings"]["utf16_units"] = utf16_units
+    stats["strings"]["top_scenes"].append(
+        {"name": str(nm or ""), "utf16_units": utf16_units, "entries": len(strings)}
+    )
+    stats["_unique_strings"] = set(str(x) for x in strings)
+    root = (psad or {}).get("root")
+    inc_command_cnt = int(
+        (pcad or {}).get(
+            "global_inc_command_cnt", (piad or {}).get("inc_command_cnt", 0)
+        )
+        or 0
+    )
+    _collect_statement_stats(root, plad, stats, inc_command_cnt)
+    _collect_tree_stats(root, stats)
+    header = _scn_header_from_bytes(dat_bytes)
+    _collect_label_stats(plad, psad, header, stats)
+    stats["expressions"]["default_arg_fills"] = int(
+        (pbsd or {}).get("default_arg_fills", 0) or 0
+    )
+    return stats
 
 
 def _macro_decl_kind(rep):
@@ -1191,6 +1676,9 @@ class BS:
                                 TNMSERR_BS_ILLEGAL_DEFAULT_ARG,
                                 (element.get("name") or {}).get("atom"),
                             )
+                        s.out_scn["default_arg_fills"] = (
+                            int(s.out_scn.get("default_arg_fills", 0) or 0) + 1
+                        )
                         arg_cnt += 1
                 s.scn_push_u8(C.CD_COMMAND)
                 s.scn_push_i32(int(element.get("arg_list_id", 0) or 0))
@@ -1393,6 +1881,7 @@ class BS:
                 "scn_cmd_name_index_list": [],
                 "namae_list": [],
                 "read_flag_list": [],
+                "default_arg_fills": 0,
             }
             sl = list(plad.get("str_list") or [])
             str_cnt = len(sl)
@@ -1455,6 +1944,7 @@ class BS:
             return 0
         if isinstance(pbsd, dict):
             pbsd["out_scn"] = out
+            pbsd["default_arg_fills"] = int(out_scn.get("default_arg_fills", 0) or 0)
         return 1
 
 
@@ -1520,7 +2010,7 @@ def compile_one_pipeline(
             continue
         baseline_usage[(kind, name)] = int((rep or {}).get("used_count", 0) or 0)
     iad = copy_ia_data(base)
-    pcad = {}
+    pcad = {"global_inc_command_cnt": int((base or {}).get("inc_command_cnt", 0) or 0)}
     ca = CharacterAnalizer()
     if log:
         log_stage("CA", ss_path, ctx)
@@ -1599,12 +2089,22 @@ def compile_one_pipeline(
     scene_macro_counts, global_macro_usage_delta = summarize_scene_macro_stats(
         iad, base=base, baseline_usage=baseline_usage
     )
+    source_stats = collect_scene_source_stats(
+        nm,
+        pcad,
+        lad,
+        mad,
+        bsd,
+        iad,
+        bsd.get("out_scn", b""),
+    )
     return {
         "nm": nm,
         "fname": fname,
         "out_scn": bsd.get("out_scn", b""),
         "scene_macro_counts": scene_macro_counts,
         "global_macro_usage_delta": global_macro_usage_delta,
+        "source_stats": source_stats,
     }
 
 
@@ -1632,6 +2132,7 @@ def compile_all(ctx, only=None, max_workers=None, parallel=True):
             "parallel": False,
             "scene_macro_counts": empty_macro_stat_counts(),
             "global_macro_usage_delta": {},
+            "source_stats": empty_source_stat_counts(),
         }
     if parallel and len(ss_files) > 1:
         from .parallel import parallel_compile
@@ -1644,13 +2145,16 @@ def compile_all(ctx, only=None, max_workers=None, parallel=True):
         result.setdefault("global_macro_usage_delta", {})
         return result
     scene_macro_counts = empty_macro_stat_counts()
+    source_stats = empty_source_stat_counts()
     for p in ss_files:
         res = compile_one(ctx, p)
         merge_macro_stat_counts(scene_macro_counts, res.get("scene_macro_counts") or {})
+        merge_source_stat_counts(source_stats, res.get("source_stats") or {})
     return {
         "parallel": False,
         "scene_macro_counts": scene_macro_counts,
         "global_macro_usage_delta": {},
+        "source_stats": source_stats,
     }
 
 

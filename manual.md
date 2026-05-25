@@ -267,10 +267,16 @@ That summary includes:
 - `inc_files`: number of `.inc` files participating in the build
 - `scene_files`: total number of `.ss` files in the input directory
 - `compiled_scene_files`: number of `.ss` files actually compiled in this run; under incremental compilation, this is the incremental subset only
-- During full compilation only: `#replace`, `#define`, `#define_s`, and `#macro` totals together with their unused counts
-- During full compilation only: `read_flags`, `read_flags_scenes`, and `top5_read_flags_scenes` (the five scene names with the highest `read_flags`, printed together with their counts)
 
-When `--tmp` causes an incremental build, unchanged `.dat` outputs are reused. In that case the project-wide macro and `read_flags` counters are intentionally reported as `n/a (incremental compile)` instead of mixing fresh counts with cached outputs.
+When the run completes a normal full scene compilation, the summary additionally includes detailed project-wide statistics:
+
+- `#replace`, `#define`, `#define_s`, and `#macro` totals together with their unused counts
+- `read_flags` and `read_flags_scenes`
+- source-side statistics for scene-local `#property` / `#command`, preprocessor directives, `#inc_start` blocks, labels, statements, expressions, operator kinds, string pools, and dialogue lines
+- `binary_sizes`
+- trailing `top5_*` detail lines: `top5_read_flags_scenes`, `top5_string_pool_scenes`, and `top5_dat_scenes`
+
+Detailed project-wide statistics are omitted instead of printed as `n/a` when the run is not a normal full scene compilation, including `--tmp`, `--dat-repack`, `--test-shuffle`, `--gei`, missing `.ss` input, and partial or failed compile runs. The basic timing and file-count summary remains available when the corresponding stages ran.
 
 #### Examples
 

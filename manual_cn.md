@@ -267,10 +267,16 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 - `inc_files`：参与编译的 `.inc` 文件数量
 - `scene_files`：输入目录中的 `.ss` 文件总数
 - `compiled_scene_files`：本次实际参与编译的 `.ss` 文件数量；在增量编译时，这里就是增量子集
-- 仅在全量编译时统计：`#replace`、`#define`、`#define_s`、`#macro` 的总数与未使用数
-- 仅在全量编译时统计：`read_flags`、`read_flags_scenes` 与 `top5_read_flags_scenes`（`read_flags` 数量最多的 5 个场景名，并同时打印各自数量）
 
-当 `--tmp` 触发增量编译时，未变更的 `.dat` 会被直接复用，因此这些项目级宏统计与 `read_flags` 统计会明确显示为 `n/a (incremental compile)`，而不会把新统计与缓存产物混在一起。
+当本次运行完成普通的全量 scene 编译时，汇总中还会追加项目级详细统计：
+
+- `#replace`、`#define`、`#define_s`、`#macro` 的总数与未使用数
+- `read_flags` 与 `read_flags_scenes`
+- scene-local `#property` / `#command`、预处理指令、`#inc_start` 区块、label、语句、表达式、运算符种类、字符串池与台词行等 source 侧统计
+- `binary_sizes`
+- 最后统一打印的 `top5_*` 明细：`top5_read_flags_scenes`、`top5_string_pool_scenes`、`top5_dat_scenes`
+
+当本次运行不是普通的全量 scene 编译时，项目级详细统计会直接省略，不再打印 `n/a` 占位。这包括 `--tmp`、`--dat-repack`、`--test-shuffle`、`--gei`、没有 `.ss` 输入，以及部分编译或编译失败等情况。对应阶段实际运行过时，基础的耗时与文件数汇总仍会保留。
 
 #### 示例
 
