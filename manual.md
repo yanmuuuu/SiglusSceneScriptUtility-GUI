@@ -19,7 +19,7 @@
    - [Command Aliases](#command-aliases)
    - [Getting Help](#getting-help)
 4. [Modes Reference](#modes-reference)
-   - [init — Download Required Constants](#init--download-required-constants)
+   - [init — Install / Refresh Required Constants](#init--install--refresh-required-constants)
    - [-lsp — Start the Language Server](#-lsp--start-the-language-server)
    - [-c / --compile — Compile Scripts](#-c----compile--compile-scripts)
    - [-x / --extract — Extract Files](#-x----extract--extract-files)
@@ -66,7 +66,7 @@
 pip install siglus-ssu
 ```
 
-After installation, you **must** run `init` once to download the required `const.py` runtime constants:
+After installation, if this machine does not already have a verified user-data `const.py`, run `init` once to install it:
 
 ```bash
 siglus-ssu init
@@ -103,7 +103,7 @@ siglus-ssu init
    uv run siglus-ssu --help
    ```
 
-   If this machine's user data directory does not yet contain a verified `const.py`, you still need to run initialization once before using any mode other than `init`:
+   When running from this repository checkout, the bundled `src/siglus_ssu/const.py` is searched before the user-data copy. That means commands usually work immediately after `uv sync`. Run `uv run siglus-ssu init` only when you want to install or refresh the user-data copy, or when you are running from a layout that does not include the bundled source copy:
 
    ```bash
    uv run siglus-ssu init
@@ -144,11 +144,10 @@ This project supports the `siglus-ssu` command-line interface only. Importing or
 # Show the global help message, listing all modes
 siglus-ssu --help
 
-# LSP mode has its own help page
+# Mode-specific --help currently falls back to the same global help page
 siglus-ssu -lsp --help
 
-# Other modes currently do not have dedicated mode-specific help pages;
-# this still falls back to the global help output.
+# Other modes behave the same way
 siglus-ssu -c --help
 ```
 
@@ -156,11 +155,13 @@ siglus-ssu -c --help
 
 ## Modes Reference
 
-### `init` — Download Required Constants
+### `init` — Install / Refresh Required Constants
 
-Downloads the `const.py` file containing engine-specific constants (opcode tables, key derivation parameters, etc.) from the project's GitHub repository.
+Installs the user-data `const.py` file containing engine-specific constants (opcode tables, key derivation parameters, etc.). When the file is missing or you force a refresh, `init` downloads it from the project's GitHub repository.
 
-**Before first use on a given machine, you must ensure that the user data directory contains a verified `const.py`. For PyPI installations this usually means running `init` once; even when running from source, you still need `init` if that user directory does not already contain a valid `const.py`.**
+At normal startup, the loader searches a source-tree copy at `src/siglus_ssu/const.py` before the user-data copy. In this repository checkout, that bundled file is present, so source-tree runs may use it even after `init` installs a user-data copy.
+
+Before using any mode other than `init`, make sure at least one verified `const.py` will be found. PyPI installs rely on the user-data copy because wheels exclude the bundled source-tree `const.py`; source-checkout runs from this repository can also use the bundled `src/siglus_ssu/const.py`.
 
 #### Syntax
 
@@ -172,24 +173,24 @@ siglus-ssu init [--force | -f] [--ref <git-ref>]
 
 | Parameter | Description |
 |---|---|
-| `--force`, `-f` | Overwrite an existing `const.py` even if one already exists. |
-| `--ref <git-ref>` | Download `const.py` from a specific Git branch, tag, or commit hash. By default, `init` tries refs associated with the current package version, including matching version commits discovered from git/GitHub and tag-like refs. |
+| `--force`, `-f` | Overwrite the user-data `const.py` even if one already exists. |
+| `--ref <git-ref>` | Choose the Git branch, tag, or commit hash used when `init` downloads `const.py`. If the user-data target already exists, pair `--ref` with `--force` to actually redownload it. By default, `init` tries refs associated with the current package version, including matching version commits discovered from git/GitHub and tag-like refs. |
 
-`init` requires network access to the GitHub API. If `--force` is not specified and `const.py` already exists at the target location, the command will not re-download but will directly load and verify the existing file.
+`init` only needs GitHub API access when it actually has to fetch `const.py`. If `--force` is not specified and the user-data target already exists, the command reuses that file instead of downloading it again, then verifies it while loading.
 
-After download, `const.py` is verified against a built-in SHA-512 allowlist. The built-in default ref mapping only tracks the current supported package version; explicit `--ref` values still work as long as they ultimately resolve to the same allowlisted `const.py` content.
+Any downloaded `const.py` is verified against a built-in SHA-512 allowlist. The built-in default ref mapping tracks the current supported package version; explicit `--ref` values still work as long as they resolve to an allowlisted `const.py` content.
 
 #### Examples
 
 ```bash
-# Basic initialization (downloads const.py for the current package version)
+# Ensure the default user-data const.py is installed
 siglus-ssu init
 
-# Overwrite an existing const.py
+# Redownload into the user-data location even if const.py already exists
 siglus-ssu init --force
 
-# Download const.py from a specific tagged release
-siglus-ssu init --ref v0.3.3
+# Force a download from a specific tagged release
+siglus-ssu init --force --ref v0.3.3
 ```
 
 ---
@@ -1974,17 +1975,17 @@ Therefore, an implementation that reproduces only the single-file front-end but 
 
 ## Tips and Troubleshooting
 
-### `const.py is missing. Run 'siglus-ssu init' first.`
+### Preparing `const.py`
 
-You installed from PyPI but have not run the initialization step yet:
+If neither the bundled source-tree copy nor the user-data copy provides a verified `const.py`, run:
 
 ```bash
 siglus-ssu init
 ```
 
-### Tokenizer Errors During Compilation
+### Unexpected Tokens During Compilation
 
-If you get compilation errors about unexpected tokens, check the `.ss` file near the reported line number. Strings containing commas, parentheses, or Japanese quotation marks may need to be wrapped in double quotes:
+Unexpected tokens during compilation usually mean the nearby `.ss` text needs clearer quoting. Strings containing commas, parentheses, or Japanese quotation marks may need to be wrapped in double quotes:
 
 ```
 # Before (may cause errors if the comma confuses the parser)
@@ -1994,7 +1995,7 @@ mes(【Hero】, Wait, I need to think about this.)
 mes(【Hero】, "Wait, I need to think about this.")
 ```
 
-### Matching the Shuffle Seed
+### Reproducing the Shuffle Seed
 
 This tool can reproduce `.dat` string-table shuffle positions with an MSVC-compatible `rand()` seed. Translation work usually **does not** need this; you only need to care about the seed when you want byte-for-byte identical output.
 
@@ -2018,7 +2019,7 @@ siglus-ssu -c --set-shuffle <found_seed> /path/to/src/ /path/to/out/
 
 > **Note:** In rare cases, a single initial seed can't fully reproduce the shuffle bit-for-bit. This is likely a result of the original developers using incremental compilation (which we also support via `--tmp`), which changes the file compilation order and consequently the sequence of `rand()` calls.
 
-### Compatibility Note: Mixed-Form String Multiplication
+### Mixed-Form String Multiplication
 
 The official compiler writes the right-hand form of a plain binary `*` expression as if it were the left operand (`exp_1`). This project intentionally uses the semantically natural right operand form (`exp_2`) instead.
 
@@ -2032,7 +2033,7 @@ s[0] = "ABC" s[0] *= 3 set_namae(s[0])
 
 Do not rewrite it as `s[0] = s[0] * 3`, because that still uses the same problematic ordinary binary `*` expression form.
 
-### Pillow Not Installed (G00 Mode)
+### Pillow Dependency for G00 Mode
 
 In G00 image mode, PNG decoding, merge mode, create mode, and type0/type1/type2/type3 update paths require [Pillow](https://pillow.readthedocs.io/). Pure analysis and type3 JPEG passthrough extraction do not:
 
@@ -2040,7 +2041,7 @@ In G00 image mode, PNG decoding, merge mode, create mode, and type0/type1/type2/
 pip install pillow
 ```
 
-### ffmpeg / ffplay Not Found (Sound Trim / Play Mode)
+### External Tools for Sound Trim and Playback
 
 The `--trim` feature in sound mode requires `ffmpeg` only when trimming `.owp` files, and the `--play` feature requires `ffplay`; required tools must be installed and available on the system `PATH`. Install them from https://ffmpeg.org/ or via your system package manager.
 
@@ -2050,7 +2051,7 @@ The `--play` feature also requires [psutil](https://pypi.org/project/psutil/):
 pip install psutil
 ```
 
-### Using the Pure Python Fallback
+### Pure Python Fallback
 
 If you encounter issues with the native Rust extension, you can force the pure Python implementation with the `--legacy` flag:
 
@@ -2062,4 +2063,4 @@ Note that the pure Python implementation is significantly slower for large proje
 
 ### Termux / Non-prebuilt Platforms
 
-There is no prebuilt wheel available for Termux (Android). You must build the Rust extension manually. This requires installing both the Rust toolchain (`rustup`) and the appropriate `cross` toolchain for cross-compiling to your architecture, which is not an easy process.
+There is no prebuilt wheel available for Termux (Android). You must build the Rust extension manually with a working Rust toolchain and any platform-specific native build prerequisites your environment needs.

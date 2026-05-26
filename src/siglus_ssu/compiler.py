@@ -849,7 +849,7 @@ def main(argv=None):
     ap.add_argument(
         "--no-lzss",
         action="store_true",
-        help="Disable LZSS only (official easy link behavior).",
+        help="Disable scene LZSS and omit source chunks (official easy link behavior).",
     )
     ap.add_argument(
         "--serial",

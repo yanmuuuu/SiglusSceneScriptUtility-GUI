@@ -19,7 +19,7 @@
    - [命令别名](#命令别名)
    - [获取帮助](#获取帮助)
 4. [模式参考](#模式参考)
-   - [init — 下载运行时常量](#init--下载运行时常量)
+   - [init — 安装/刷新运行时常量](#init--安装刷新运行时常量)
    - [-lsp — 启动语言服务器](#-lsp--启动语言服务器)
    - [-c / --compile — 编译脚本](#-c----compile--编译脚本)
    - [-x / --extract — 提取文件](#-x----extract--提取文件)
@@ -66,7 +66,7 @@
 pip install siglus-ssu
 ```
 
-安装后，**必须**运行一次 `init` 以下载运行时所需的 `const.py`：
+安装后，如果这台机器里还没有通过校验的用户数据 `const.py`，请运行一次 `init` 来安装它：
 
 ```bash
 siglus-ssu init
@@ -103,7 +103,7 @@ siglus-ssu init
    uv run siglus-ssu --help
    ```
 
-   若这台机器的用户数据目录里还没有通过校验的 `const.py`，那么在运行除 `init` 以外的模式前，仍需先执行一次：
+   在当前这个仓库 checkout 中运行时，程序会先查找内置的 `src/siglus_ssu/const.py`，再查找用户数据副本。因此 `uv sync` 完成后通常就可以直接使用。只有在您想安装或刷新用户数据副本，或者当前运行布局不包含这份源码树内置副本时，才需要执行：
 
    ```bash
    uv run siglus-ssu init
@@ -144,11 +144,10 @@ CLI 也接受几个便利用法：
 # 显示全局帮助，列出所有模式
 siglus-ssu --help
 
-# LSP 模式有独立帮助页
+# 目前所有模式级 --help 都会回到同一份全局帮助
 siglus-ssu -lsp --help
 
-# 除 LSP 外，当前 CLI 其他模式仍没有独立的模式级帮助页；
-# 下面的写法仍会显示全局帮助
+# 其他模式也是一样
 siglus-ssu -c --help
 ```
 
@@ -156,11 +155,13 @@ siglus-ssu -c --help
 
 ## 模式参考
 
-### `init` — 下载运行时常量
+### `init` — 安装/刷新运行时常量
 
-从项目 GitHub 仓库下载 `const.py` 文件，其中包含引擎特定的常量（操作码表、密钥推导参数等）。
+把包含引擎特定常量（操作码表、密钥推导参数等）的用户数据 `const.py` 安装到本机。只有在该文件缺失，或您显式要求刷新时，`init` 才会从项目 GitHub 仓库下载它。
 
-**每次在一台新机器上首次使用前，都必须先确保用户数据目录中存在已校验的 `const.py`。对从 PyPI 安装的用户，这通常意味着先运行一次 `init`；即使是从源码运行，只要该用户目录里还没有有效的 `const.py`，也仍然需要先执行 `init`。**
+正常启动时，加载器会先查找源码树里的 `src/siglus_ssu/const.py`，再查找用户数据副本。在当前这个仓库 checkout 中，这份内置文件是存在的，所以即使您执行过 `init`，直接从源码树运行时也仍可能优先使用内置副本。
+
+在使用除 `init` 以外的任何模式前，请先确保至少有一份能通过校验的 `const.py` 会被找到。PyPI 安装依赖用户数据副本，因为 wheel 会排除源码树内置的 `const.py`；而从当前仓库源码树运行时，也可以直接使用内置的 `src/siglus_ssu/const.py`。
 
 #### 语法
 
@@ -172,24 +173,24 @@ siglus-ssu init [--force | -f] [--ref <git-ref>]
 
 | 参数 | 说明 |
 |---|---|
-| `--force`, `-f` | 即使已存在 `const.py` 也强制覆盖。 |
-| `--ref <git-ref>` | 从指定的 Git 分支、标签或提交哈希下载 `const.py`。默认情况下，`init` 会尝试与当前包版本关联的 ref，包括从 git/GitHub 发现的匹配版本提交，以及类似标签名的 ref。 |
+| `--force`, `-f` | 即使用户数据位置已经存在 `const.py`，也强制覆盖。 |
+| `--ref <git-ref>` | 指定 `init` 下载 `const.py` 时使用的 Git 分支、标签或提交哈希。如果用户数据目标已经存在文件，请把 `--ref` 与 `--force` 配合使用，才能真正重新下载。默认情况下，`init` 会尝试与当前包版本关联的 ref，包括从 git/GitHub 发现的匹配版本提交，以及类似标签名的 ref。 |
 
-`init` 需要联网访问 GitHub API。若未加 `--force` 且目标位置已经存在 `const.py`，命令不会重新下载，而是直接加载并校验现有文件。
+`init` 只有在确实需要获取 `const.py` 时才需要联网访问 GitHub API。若未加 `--force` 且用户数据目标位置已经存在文件，命令会直接复用该文件，不会重复下载，并在后续加载时完成校验。
 
-下载完成后，`const.py` 会与内置的 SHA-512 白名单进行校验。内置的默认 ref 映射现在只跟踪当前支持的包版本；显式传入的 `--ref` 只要最终解析到同一份白名单内的 `const.py` 内容，仍然可以使用。
+下载得到的 `const.py` 会与内置的 SHA-512 白名单进行校验。内置的默认 ref 映射跟踪当前支持的包版本；显式传入的 `--ref` 只要最终解析到白名单允许的 `const.py` 内容，仍然可以使用。
 
 #### 示例
 
 ```bash
-# 基本初始化（下载与当前包版本对应的 const.py）
+# 确保默认的用户数据 const.py 已安装
 siglus-ssu init
 
-# 覆盖已有的 const.py
+# 即使已有 const.py，也重新下载到用户数据位置
 siglus-ssu init --force
 
-# 从特定标签下载 const.py
-siglus-ssu init --ref v0.3.3
+# 强制从特定标签重新下载 const.py
+siglus-ssu init --force --ref v0.3.3
 ```
 
 ---
@@ -1974,17 +1975,17 @@ scene 中的 `command` 定义有两种来源：
 
 ## 提示与故障排除
 
-### `const.py is missing. Run 'siglus-ssu init' first.`
+### 准备 `const.py`
 
-您从 PyPI 安装了软件包但尚未运行初始化步骤：
+如果源码树内置副本和用户数据副本都不能提供一份通过校验的 `const.py`，请先运行：
 
 ```bash
 siglus-ssu init
 ```
 
-### 编译时出现 token 错误
+### 编译时的意外 token
 
-若编译时报告意外 token 错误，请检查报告行号附近的 `.ss` 文件。包含逗号、括号或日文引号括号的字符串可能需要用双引号包裹：
+编译时出现意外 token，通常表示附近的 `.ss` 文本需要更明确的引号。包含逗号、括号或日文引号括号的字符串，往往需要用双引号包裹：
 
 ```
 # 修改前（逗号可能混淆解析器）
@@ -1994,7 +1995,7 @@ mes(【主角】, 等一下，我需要考虑一下。)
 mes(【主角】, "等一下，我需要考虑一下。")
 ```
 
-### 匹配混淆种子
+### 复现混淆种子
 
 本工具支持用 MSVC 兼容 `rand()` 种子复现 `.dat` 字符串表的位置乱序。翻译工作通常**不需要**复现这一点；只有在追求逐字节一致输出时，才需要关心种子问题。
 
@@ -2018,7 +2019,7 @@ siglus-ssu -c --set-shuffle <found_seed> /path/to/src/ /path/to/out/
 
 > **注意：** 在极少数情况下，单个初始种子可能无法完全逐字节复现位置混淆。这可能是因为原开发者在构建时使用了增量编译（我们也通过 `--tmp` 选项支持），这会改变文件的编译顺序，从而改变 `rand()` 调用的顺序。
 
-### 兼容性提示：字符串乘整数的异构乘法
+### 字符串乘整数的异构乘法
 
 官方编译器在普通二元 `*` 表达式上，会把右侧 form 按左操作数 (`exp_1`) 写入。本项目有意改为语义上更自然的右操作数 form (`exp_2`)。
 
@@ -2032,7 +2033,7 @@ s[0] = "ABC" s[0] *= 3 set_namae(s[0])
 
 不要改写成 `s[0] = s[0] * 3`，因为它仍然属于同一种有问题的普通二元 `*` 表达式。
 
-### 未安装 Pillow（G00 模式）
+### G00 模式的 Pillow 依赖
 
 G00 图片模式中，PNG 解码、合并模式、创建模式，以及 type0/type1/type2/type3 的更新路径需要 [Pillow](https://pillow.readthedocs.io/)；纯分析和 type3 JPEG passthrough 提取不需要：
 
@@ -2040,7 +2041,7 @@ G00 图片模式中，PNG 解码、合并模式、创建模式，以及 type0/ty
 pip install pillow
 ```
 
-### 找不到 ffmpeg / ffplay（Sound 裁剪 / 播放模式）
+### Sound 裁剪与播放所需外部工具
 
 Sound 模式的 `--trim` 功能只有在裁剪 `.owp` 文件时才需要 `ffmpeg`，`--play` 功能需要 `ffplay`；所需工具必须已安装并在系统 `PATH` 中可用。请从 https://ffmpeg.org/ 或通过系统包管理器安装。
 
@@ -2050,7 +2051,7 @@ Sound 模式的 `--trim` 功能只有在裁剪 `.owp` 文件时才需要 `ffmpeg
 pip install psutil
 ```
 
-### 使用纯 Python 回退
+### 纯 Python 回退
 
 若遇到 Rust 原生扩展问题，可使用 `--legacy` 标志强制使用纯 Python 实现：
 
@@ -2062,4 +2063,4 @@ siglus-ssu --legacy -c /path/to/src/ /path/to/out.pck
 
 ### Termux / 无预构建 wheel 的平台
 
-Termux（Android）没有预先构建好的 wheel。您必须手动构建 Rust 扩展，这需要安装 Rust 工具链（`rustup`）和适合您架构的 `cross` 交叉编译工具链，此过程具有一定难度。
+Termux（Android）没有预先构建好的 wheel。您必须手动构建 Rust 扩展，并准备好可用的 Rust 工具链以及当前环境所需的平台相关原生构建前置条件。

@@ -71,7 +71,7 @@ def _usage(out=None):
         "    --no-os         Skip OS stage (do not pack source files)\n"
         "    --dat-repack    Repack existing .dat files in input_dir (not with --tmp/--test-shuffle)\n"
         "    --no-angou      Disable encryption/compression (not with --tmp)\n"
-        "    --no-lzss       Disable LZSS only (official easy link behavior; not with --tmp)\n"
+        "    --no-lzss       Disable scene LZSS and omit source chunks (official easy link; not with --tmp)\n"
         "    --serial        Disable parallel compilation\n"
         "    --max-workers   Limit parallel workers (default: auto; parallel only)\n"
         "    --set-shuffle   Set initial shuffle seed (MSVCRand) for .dat string order; implies --serial (not with --tmp)\n"
