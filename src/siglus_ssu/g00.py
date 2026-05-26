@@ -408,7 +408,7 @@ def analyze_one(p: str):
 
 def iter_g00(p):
     p = Path(p)
-    return [p] if p.is_file() else [x for x in sorted(p.rglob("*.g00")) if x.is_file()]
+    return [p] if p.is_file() else [x for x in sorted(p.glob("*.g00")) if x.is_file()]
 
 
 def run_extract(inp, out_dir):
@@ -1161,6 +1161,11 @@ def _apply_updates_to_g00(base_bytes: bytes, updates: list, type_expect, report=
         if not _is_jpeg_file(img_p):
             raise ValueError("type3 expects .jpg/.jpeg")
         bw, bh = struct.unpack_from("<HH", base_bytes, 1)
+        need_pil()
+        with Image.open(img_p) as img:
+            w, h = img.size
+        if (w, h) != (bw, bh):
+            raise ValueError(f"size mismatch: image={w}x{h} base={bw}x{bh}")
         jpeg = img_p.read_bytes()
         base_jpeg = de_xor(base_bytes[5:])
         is_changed = base_jpeg != jpeg

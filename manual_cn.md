@@ -873,7 +873,7 @@ siglus-ssu -m --disam-apply <path_to_dat | path_to_dir>
 | type2 | 多 cut 拼合图像（sprite sheet），包含多个按编号索引的 cut。 |
 | type3 | XOR 混淆的 JPEG 图片。 |
 
-> **注意：** `--a` 一定不需要 Pillow。提取或更新 type3 JPEG payload 可以不依赖 Pillow；但 PNG 解码、合并模式、创建模式（包括需要读取 JPEG 尺寸的 type3 创建），以及 type0/type1/type2 的重建或更新路径都需要 [Pillow](https://pillow.readthedocs.io/)（`pip install pillow`）。
+> **注意：** `--a` 一定不需要 Pillow。提取 type3 JPEG payload 可以不依赖 Pillow；但 PNG 解码、合并模式、创建模式（包括需要读取 JPEG 尺寸的 type3 创建），以及 type0/type1/type2/type3 的更新路径都需要 [Pillow](https://pillow.readthedocs.io/)（`pip install pillow`）。
 
 #### 语法
 
@@ -944,7 +944,7 @@ siglus-ssu -g --c /path/to/new_bg.png /path/to/game_bg.g00 --refer /path/to/orig
 siglus-ssu -g --c /path/to/updated_pngs/ /path/to/out_g00/ --refer /path/to/original_g00/
 ```
 
-目录输入的 `-g --x` 会**递归**扫描 `.g00`，但当前实现会把所有输出直接写到同一个 `output_dir`，不保留原始子目录；若不同子目录中存在同名资源，后续同名输出会因为目标已存在而被跳过。
+目录输入的 `-g --x` 只扫描当前目录层级的 `.g00` 文件。
 
 #### 创建模式说明
 
@@ -2034,7 +2034,7 @@ s[0] = "ABC" s[0] *= 3 set_namae(s[0])
 
 ### 未安装 Pillow（G00 模式）
 
-G00 图片模式中，PNG 解码、合并模式、创建模式，以及 type0/type1/type2 的重建或更新路径需要 [Pillow](https://pillow.readthedocs.io/)；纯分析和 type3 JPEG passthrough 提取/更新路径不需要：
+G00 图片模式中，PNG 解码、合并模式、创建模式，以及 type0/type1/type2/type3 的更新路径需要 [Pillow](https://pillow.readthedocs.io/)；纯分析和 type3 JPEG passthrough 提取不需要：
 
 ```bash
 pip install pillow

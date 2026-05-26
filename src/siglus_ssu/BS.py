@@ -13,8 +13,11 @@ from .MA import MA
 from .common import (
     build_empty_ia_data,
     build_operator_render_tables,
+    empty_macro_stat_counts,
     format_scene_name,
     log_stage,
+    macro_decl_kind,
+    merge_macro_stat_counts,
     record_stage_time,
     set_stage_time,
     write_u16_le,
@@ -145,9 +148,6 @@ def copy_ia_data(base):
     }
 
 
-_MACRO_STAT_KINDS = ("replace", "define", "define_s", "macro")
-
-
 def _op_code(atom):
     atom = atom if isinstance(atom, dict) else {}
     try:
@@ -173,25 +173,6 @@ def _assign_operator_symbol(atom, operator_tables):
         pass
     text = _operator_symbol(atom, False, operator_tables)
     return text + "=" if text != str(op) else text
-
-
-def empty_macro_stat_counts():
-    return {kind: {"total": 0, "unused": 0} for kind in _MACRO_STAT_KINDS}
-
-
-def merge_macro_stat_counts(dst, src):
-    if not isinstance(dst, dict) or not isinstance(src, dict):
-        return dst
-    for kind in _MACRO_STAT_KINDS:
-        bucket = dst.setdefault(kind, {"total": 0, "unused": 0})
-        other = src.get(kind) or {}
-        bucket["total"] = int(bucket.get("total", 0) or 0) + int(
-            other.get("total", 0) or 0
-        )
-        bucket["unused"] = int(bucket.get("unused", 0) or 0) + int(
-            other.get("unused", 0) or 0
-        )
-    return dst
 
 
 def _merge_counter_map(dst, src):
@@ -637,16 +618,6 @@ def collect_scene_source_stats(nm, pcad, plad, psad, pbsd, piad, dat_bytes):
     return stats
 
 
-def _macro_decl_kind(rep):
-    kind = str((rep or {}).get("decl_type") or "")
-    if kind in _MACRO_STAT_KINDS:
-        return kind
-    tp = str((rep or {}).get("type") or "")
-    if tp in ("replace", "define", "macro"):
-        return tp
-    return ""
-
-
 def summarize_scene_macro_stats(iad, base=None, baseline_usage=None):
     counts = empty_macro_stat_counts()
     usage_delta = {}
@@ -655,7 +626,7 @@ def summarize_scene_macro_stats(iad, base=None, baseline_usage=None):
     base_count = len(base_defs)
     baseline_usage = baseline_usage if isinstance(baseline_usage, dict) else {}
     for rep in macro_defs[base_count:]:
-        kind = _macro_decl_kind(rep)
+        kind = macro_decl_kind(rep)
         if not kind:
             continue
         bucket = counts[kind]
@@ -663,7 +634,7 @@ def summarize_scene_macro_stats(iad, base=None, baseline_usage=None):
         if int((rep or {}).get("used_count", 0) or 0) <= 0:
             bucket["unused"] += 1
     for rep in base_defs:
-        kind = _macro_decl_kind(rep)
+        kind = macro_decl_kind(rep)
         name = str((rep or {}).get("name") or "")
         if (not kind) or (not name):
             continue
@@ -1992,7 +1963,7 @@ def compile_one_pipeline(
             ctx["ia_data"] = base
     baseline_usage = {}
     for rep in list(base.get("macro_defs") or []):
-        kind = _macro_decl_kind(rep)
+        kind = macro_decl_kind(rep)
         name = str((rep or {}).get("name") or "")
         if (not kind) or (not name):
             continue

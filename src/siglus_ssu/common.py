@@ -8,6 +8,36 @@ from ._const_manager import get_const_module
 C = get_const_module()
 ANGOU_DAT_NAME = "\u6697\u53f7.dat"
 KEY_TXT_NAME = "key.txt"
+MACRO_STAT_KINDS = ("replace", "define", "define_s", "macro")
+
+
+def macro_decl_kind(rep):
+    kind = str((rep or {}).get("decl_type") or "")
+    if kind in MACRO_STAT_KINDS:
+        return kind
+    tp = str((rep or {}).get("type") or "")
+    if tp in ("replace", "define", "macro"):
+        return tp
+    return ""
+
+
+def empty_macro_stat_counts():
+    return {kind: {"total": 0, "unused": 0} for kind in MACRO_STAT_KINDS}
+
+
+def merge_macro_stat_counts(dst, src):
+    if not isinstance(dst, dict) or not isinstance(src, dict):
+        return dst
+    for kind in MACRO_STAT_KINDS:
+        bucket = dst.setdefault(kind, {"total": 0, "unused": 0})
+        other = src.get(kind) or {}
+        bucket["total"] = int(bucket.get("total", 0) or 0) + int(
+            other.get("total", 0) or 0
+        )
+        bucket["unused"] = int(bucket.get("unused", 0) or 0) + int(
+            other.get("unused", 0) or 0
+        )
+    return dst
 
 
 def invert_form_code_map():

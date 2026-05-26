@@ -35,13 +35,16 @@ from .common import (
     parse_code,
     find_named_path,
     ANGOU_DAT_NAME,
+    MACRO_STAT_KINDS,
     has_option,
+    empty_macro_stat_counts,
     norm_charset,
+    macro_decl_kind,
+    merge_macro_stat_counts,
 )
 
 C = get_const_module()
 SCENE_SCRIPT_ID_PREFIX = b"// #SCENE_SCRIPT_ID = "
-MACRO_STAT_KINDS = ("replace", "define", "define_s", "macro")
 
 
 def source_angou_encrypt(data: bytes, name: str, ctx: dict) -> bytes:
@@ -425,20 +428,6 @@ def _init_stats(ctx):
     stats.setdefault("binary_size_stats", None)
 
 
-def _macro_decl_kind(rep):
-    kind = str((rep or {}).get("decl_type") or "")
-    if kind in MACRO_STAT_KINDS:
-        return kind
-    tp = str((rep or {}).get("type") or "")
-    if tp in ("replace", "define", "macro"):
-        return tp
-    return ""
-
-
-def _empty_macro_counts():
-    return {kind: {"total": 0, "unused": 0} for kind in MACRO_STAT_KINDS}
-
-
 def _set_compile_file_stats(
     ctx,
     *,
@@ -485,7 +474,7 @@ def _collect_macro_stats(ctx, compile_stats):
     iad = ctx.get("ia_data")
     if not isinstance(iad, dict):
         return None
-    macro_counts = _empty_macro_counts()
+    macro_counts = empty_macro_stat_counts()
     compile_stats = compile_stats if isinstance(compile_stats, dict) else {}
     is_parallel = bool(compile_stats.get("parallel"))
     usage_delta = (
@@ -494,7 +483,7 @@ def _collect_macro_stats(ctx, compile_stats):
         else {}
     )
     for rep in list(iad.get("macro_defs") or []):
-        kind = _macro_decl_kind(rep)
+        kind = macro_decl_kind(rep)
         name = str((rep or {}).get("name") or "")
         if not kind:
             continue
@@ -505,12 +494,7 @@ def _collect_macro_stats(ctx, compile_stats):
             used += int(usage_delta.get((kind, name), 0) or 0)
         if used <= 0:
             bucket["unused"] += 1
-    scene_counts = compile_stats.get("scene_macro_counts") or {}
-    for kind in MACRO_STAT_KINDS:
-        bucket = macro_counts[kind]
-        other = scene_counts.get(kind) or {}
-        bucket["total"] += int(other.get("total", 0) or 0)
-        bucket["unused"] += int(other.get("unused", 0) or 0)
+    merge_macro_stat_counts(macro_counts, compile_stats.get("scene_macro_counts") or {})
     return macro_counts
 
 
@@ -1003,7 +987,7 @@ def main(argv=None):
     ok = False
     compile_stats = {
         "parallel": False,
-        "scene_macro_counts": _empty_macro_counts(),
+        "scene_macro_counts": empty_macro_stat_counts(),
         "global_macro_usage_delta": {},
         "source_stats": empty_source_stat_counts(),
     }

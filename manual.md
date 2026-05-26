@@ -873,7 +873,7 @@ Provides tools for analyzing, extracting, merging, creating, and updating `.g00`
 | type2 | Multi-cut composite image (sprite sheet) containing multiple indexed cuts. |
 | type3 | XOR-obfuscated JPEG image. |
 
-> **Note:** `--a` never requires Pillow. Extracting or updating type3 JPEG payloads can run without Pillow, but PNG decoding, merge mode, create mode (including type3 create, which reads JPEG dimensions), and type0/type1/type2 rebuild or update paths require [Pillow](https://pillow.readthedocs.io/) (`pip install pillow`).
+> **Note:** `--a` never requires Pillow. Extracting type3 JPEG payloads can run without Pillow, but PNG decoding, merge mode, create mode (including type3 create, which reads JPEG dimensions), and type0/type1/type2/type3 update paths require [Pillow](https://pillow.readthedocs.io/) (`pip install pillow`).
 
 #### Syntax
 
@@ -944,7 +944,7 @@ siglus-ssu -g --c /path/to/new_bg.png /path/to/game_bg.g00 --refer /path/to/orig
 siglus-ssu -g --c /path/to/updated_pngs/ /path/to/out_g00/ --refer /path/to/original_g00/
 ```
 
-Directory input for `-g --x` **recursively** scans for `.g00` files, but the current implementation writes all output directly to the same `output_dir` without preserving the original subdirectory structure; if identically named resources exist in different subdirectories, later same-named outputs are skipped because the target already exists.
+Directory input for `-g --x` scans only the immediate directory level for `.g00` files.
 
 #### Create Mode Notes
 
@@ -2034,7 +2034,7 @@ Do not rewrite it as `s[0] = s[0] * 3`, because that still uses the same problem
 
 ### Pillow Not Installed (G00 Mode)
 
-In G00 image mode, PNG decoding, merge mode, create mode, and type0/type1/type2 rebuild or update paths require [Pillow](https://pillow.readthedocs.io/). Pure analysis and type3 JPEG passthrough extract/update paths do not:
+In G00 image mode, PNG decoding, merge mode, create mode, and type0/type1/type2/type3 update paths require [Pillow](https://pillow.readthedocs.io/). Pure analysis and type3 JPEG passthrough extraction do not:
 
 ```bash
 pip install pillow

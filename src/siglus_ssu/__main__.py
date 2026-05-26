@@ -187,19 +187,6 @@ def _usage_short(out=None):
     out.write(text)
 
 
-def _usage_init(out=None):
-    if out is None:
-        out = sys.stdout
-    p = _prog()
-    text = (
-        f"usage: {p} init [--force|-f] [--ref <git-ref>]\n"
-        "Download required const.py.\n"
-        "  --force, -f   Overwrite existing const.py\n"
-        "  --ref         Git ref (branch/tag/commit), default: current package version release ref\n"
-    )
-    out.write(text)
-
-
 def _drop_const_module():
     sys.modules.pop("siglus_ssu.const", None)
     pkg = sys.modules.get("siglus_ssu")
@@ -303,19 +290,9 @@ def main(argv=None):
         _usage()
         return 0
     mode = argv[0]
-    if mode == "-lsp":
-        if len(argv) > 1 and argv[1] in ("-h", "--help", "help"):
-            sys.stdout.write(f"{_prog()} -lsp [--serial]\n")
-            sys.stdout.write("Run the SiglusSceneScript Language Server over stdio.\n")
-            sys.stdout.write(
-                "  --serial  Disable default parallel workspace scanning.\n"
-            )
-            return 0
-    elif mode in ("init", "--init"):
-        if len(argv) > 1 and argv[1] in ("-h", "--help", "help"):
-            _usage_init()
-            return 0
-    elif len(argv) > 1 and argv[1] in ("-h", "--help", "help"):
+    if len(argv) > 1 and (
+        argv[1] == "help" or any(a in ("-h", "--help") for a in argv[1:])
+    ):
         _usage()
         return 0
     if mode in ("init", "--init"):
@@ -338,7 +315,7 @@ def main(argv=None):
                     sys.stderr.write(f"{_prog()}: --ref requires a value\n")
                     return 2
             elif a in ("-h", "--help", "help"):
-                _usage_init()
+                _usage()
                 return 0
             else:
                 sys.stderr.write(f"{_prog()}: unknown init option: {a}\n")
