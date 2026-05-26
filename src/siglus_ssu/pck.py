@@ -1744,6 +1744,7 @@ def extract_pck(input_pck: str, output_dir: str, dat_txt: bool = False) -> int:
     input_pck = os.path.abspath(input_pck)
     output_dir = os.path.abspath(output_dir)
     ok_cnt = 0
+    fail_cnt = 0
     dat = read_bytes(input_pck)
     if _looks_like_flix_pck(dat) and (not looks_like_siglus_pck(dat)):
         info = _parse_flix_pck(dat)
@@ -1800,6 +1801,7 @@ def extract_pck(input_pck: str, output_dir: str, dat_txt: bool = False) -> int:
     D = None
     disam_stats = None
     dat_items = []
+    disam_fail_cnt = 0
     if dat_txt:
         from . import dat as D
 
@@ -1807,15 +1809,20 @@ def extract_pck(input_pck: str, output_dir: str, dat_txt: bool = False) -> int:
     for item in iter_pck_scene_dat_items(dat, input_pck=input_pck, hdr=hdr) or []:
         nm = str(item.get("scene_name") or "")
         rel = str(item.get("relpath") or (_safe_relpath(nm + ".dat") or (nm + ".dat")))
-        out_dat = bytes(item.get("blob") or b"")
         out_name = os.path.basename(rel) or rel
+        blob = item.get("blob")
+        if not blob:
+            sys.stderr.write(f"Failed: {out_name} (scene decode failed)\n")
+            fail_cnt += 1
+            continue
+        out_dat = bytes(blob)
         out_path = _unique_outpath(bs_dir, out_name)
         write_bytes(out_path, out_dat)
         if D and (not D.is_decompiler_excluded_dat(out_path, nm)):
             dat_items.append((out_path, out_dat, item))
         ok_cnt += 1
     if D and dat_items:
-        D.process_dat_output_items(
+        result = D.process_dat_output_items(
             [
                 {
                     "dat_path": dat_path,
@@ -1829,10 +1836,18 @@ def extract_pck(input_pck: str, output_dir: str, dat_txt: bool = False) -> int:
             ],
             stats=disam_stats,
         )
+        failed_paths = list((result or {}).get("failed_paths") or [])
+        disam_fail_cnt = len(failed_paths)
+        for dat_path in failed_paths:
+            sys.stderr.write(f"Failed: {os.path.basename(str(dat_path or ''))}\n")
     sys.stdout.write(f"Extracted scenes: {ok_cnt:d}\n")
+    if fail_cnt:
+        sys.stderr.write(f"Failed scenes: {fail_cnt:d}\n")
+    if disam_fail_cnt:
+        sys.stderr.write(f"Failed scene .dat files: {disam_fail_cnt:d}\n")
     if dat_txt and isinstance(disam_stats, dict):
         sys.stdout.write(
             f"Disassembly ended unexpectedly: {int(disam_stats.get('ended_unexpectedly', 0) or 0):d}\n"
         )
         write_disam_totals(sys.stdout, disam_stats)
-    return 0
+    return 1 if fail_cnt or disam_fail_cnt else 0

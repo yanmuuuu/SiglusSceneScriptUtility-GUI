@@ -25,7 +25,7 @@ def _print_version(out=None) -> None:
 
 def _usage(out=None):
     if out is None:
-        out = sys.stderr
+        out = sys.stdout
     p = _prog()
     text = (
         f"{p} {_get_version()}\n"
@@ -187,6 +187,19 @@ def _usage_short(out=None):
     out.write(text)
 
 
+def _usage_init(out=None):
+    if out is None:
+        out = sys.stdout
+    p = _prog()
+    text = (
+        f"usage: {p} init [--force|-f] [--ref <git-ref>]\n"
+        "Download required const.py.\n"
+        "  --force, -f   Overwrite existing const.py\n"
+        "  --ref         Git ref (branch/tag/commit), default: current package version release ref\n"
+    )
+    out.write(text)
+
+
 def _drop_const_module():
     sys.modules.pop("siglus_ssu.const", None)
     pkg = sys.modules.get("siglus_ssu")
@@ -298,6 +311,10 @@ def main(argv=None):
                 "  --serial  Disable default parallel workspace scanning.\n"
             )
             return 0
+    elif mode in ("init", "--init"):
+        if len(argv) > 1 and argv[1] in ("-h", "--help", "help"):
+            _usage_init()
+            return 0
     elif len(argv) > 1 and argv[1] in ("-h", "--help", "help"):
         _usage()
         return 0
@@ -321,7 +338,7 @@ def main(argv=None):
                     sys.stderr.write(f"{_prog()}: --ref requires a value\n")
                     return 2
             elif a in ("-h", "--help", "help"):
-                sys.stdout.write(f"usage: {_prog()} init [--force] [--ref <git-ref>]\n")
+                _usage_init()
                 return 0
             else:
                 sys.stderr.write(f"{_prog()}: unknown init option: {a}\n")
