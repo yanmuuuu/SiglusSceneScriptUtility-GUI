@@ -452,13 +452,15 @@ def parallel_source_encrypt(
 
 
 def _g00_extract_task(args):
-    path_s, out_s = args
+    path_s, out_s, trim = args
     from .g00 import extract_one
 
-    return extract_one(path_s, out_s)
+    return extract_one(path_s, out_s, trim=trim)
 
 
-def parallel_g00_extract(g00_files, out_dir, max_workers: int | None = None):
+def parallel_g00_extract(
+    g00_files, out_dir, max_workers: int | None = None, trim=False
+):
     fs = list(g00_files)
     if max_workers is not None and max_workers > 0:
         workers = max_workers
@@ -474,7 +476,9 @@ def parallel_g00_extract(g00_files, out_dir, max_workers: int | None = None):
             except StopIteration:
                 break
             print(f"[*] {f}")
-            futures.add(ex.submit(_g00_extract_task, (str(f), str(out_dir))))
+            futures.add(
+                ex.submit(_g00_extract_task, (str(f), str(out_dir), bool(trim)))
+            )
         while futures:
             for fu in as_completed(futures):
                 futures.remove(fu)
@@ -490,7 +494,9 @@ def parallel_g00_extract(g00_files, out_dir, max_workers: int | None = None):
                 try:
                     f = next(it)
                     print(f"[*] {f}")
-                    futures.add(ex.submit(_g00_extract_task, (str(f), str(out_dir))))
+                    futures.add(
+                        ex.submit(_g00_extract_task, (str(f), str(out_dir), bool(trim)))
+                    )
                 except StopIteration:
                     pass
                 break

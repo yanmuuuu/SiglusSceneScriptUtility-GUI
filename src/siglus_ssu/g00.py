@@ -15,9 +15,10 @@ from .common import read_u16_le, write_bytes
 
 C = get_const_module()
 try:
-    from PIL import Image
+    from PIL import Image, ImageChops
 except Exception:
     Image = None
+    ImageChops = None
 _G00_TYPE_DESC = {
     0: "type0 (LZSS32 BGRA)",
     1: "type1 (LZSS paletted)",
@@ -92,11 +93,21 @@ def type1_bgra(unp: bytes, w: int, h: int) -> bytes:
     return bytes(out)
 
 
-def save_png_bgra(bgra: bytes, w: int, h: int, p: Path) -> bool:
+def save_png_bgra(bgra: bytes, w: int, h: int, p: Path, trim: bool = False) -> bool:
     if p.exists():
         return False
     need_pil()
-    Image.frombytes("RGBA", (w, h), bgra, "raw", "BGRA").save(p, "PNG")
+    img = Image.frombytes("RGBA", (w, h), bgra, "raw", "BGRA")
+    if trim:
+        full = (0, 0, w, h)
+        bbox = img.getchannel("A").getbbox()
+        if bbox == full:
+            rgb = img.convert("RGB")
+            bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+            bbox = ImageChops.difference(rgb, bg).getbbox()
+        if bbox and bbox != full:
+            img = img.crop(bbox)
+    img.save(p, "PNG")
     return True
 
 
@@ -283,24 +294,59 @@ def merge_g00_files(g00_paths, output_dir=None):
     return out_path
 
 
-def cut_to_png(blk: bytes, p: Path, preserve_hidden_rgb: bool = True) -> bool:
+def cut_to_png(
+    blk: bytes, p: Path, preserve_hidden_rgb: bool = True, trim: bool = False
+) -> bool:
     if p.exists():
         return False
     need_pil()
     canvas, cw, ch = _render_cut_canvas(blk, keep_hidden_rgb=preserve_hidden_rgb)
-    Image.frombytes("RGBA", (cw, ch), canvas, "raw", "BGRA").save(p, "PNG")
+    img = Image.frombytes("RGBA", (cw, ch), canvas, "raw", "BGRA")
+    if trim:
+        full = (0, 0, cw, ch)
+        bbox = img.getchannel("A").getbbox()
+        if bbox == full:
+            rgb = img.convert("RGB")
+            bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+            bbox = ImageChops.difference(rgb, bg).getbbox()
+        if bbox and bbox != full:
+            img = img.crop(bbox)
+    img.save(p, "PNG")
     return True
 
 
-def _extract_simple(pre: str, d: bytes, out: Path):
+def _extract_simple(pre: str, d: bytes, out: Path, trim: bool = False):
     t, w, h, pay = _parse_simple_g00(d)
     dst = out / f"{pre}{_SIMPLE_EXT[t]}"
     if dst.exists():
         return ("skip", 0, 1)
     if t == 3:
-        write_bytes(str(dst), de_xor(pay))
+        jpeg = de_xor(pay)
+        if trim:
+            need_pil()
+            from io import BytesIO
+
+            img = Image.open(BytesIO(jpeg))
+            full = (0, 0, *img.size)
+            if "A" in img.getbands():
+                bbox = img.getchannel("A").getbbox()
+                if bbox == full:
+                    rgb = img.convert("RGB")
+                    bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+                    bbox = ImageChops.difference(rgb, bg).getbbox()
+            else:
+                rgb = img.convert("RGB")
+                bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+                bbox = ImageChops.difference(rgb, bg).getbbox()
+            if bbox and bbox != full:
+                img = img.crop(bbox)
+                img.save(dst, "JPEG")
+            else:
+                write_bytes(str(dst), jpeg)
+        else:
+            write_bytes(str(dst), jpeg)
     else:
-        save_png_bgra(_decode_simple_g00_bgra(t, pay, w, h), w, h, dst)
+        save_png_bgra(_decode_simple_g00_bgra(t, pay, w, h), w, h, dst, trim=trim)
     return ("ok", 1, 0)
 
 
@@ -325,7 +371,7 @@ def _type2_extract_meta(ci: int, blk: bytes, outer_rects, dst_name: str):
     }
 
 
-def extract_one(path_s: str, out_s: str):
+def extract_one(path_s: str, out_s: str, trim: bool = False):
     p = Path(path_s)
     out = Path(out_s)
     d = p.read_bytes()
@@ -334,7 +380,7 @@ def extract_one(path_s: str, out_s: str):
     t = d[0]
     pre = p.stem
     if t in _SIMPLE_G00_TYPES:
-        return _extract_simple(pre, d, out)
+        return _extract_simple(pre, d, out, trim=trim)
     if t != 2:
         raise ValueError("unknown type")
     need_pil()
@@ -344,22 +390,26 @@ def extract_one(path_s: str, out_s: str):
     outer_rects = _type2_outer_rects(d, 9, cut_cnt)
     single = cut_cnt == 1 and len(cuts) == 1 and cuts[0][0] == 0
     wrote = sk = 0
-    cuts_meta = [None] * max(int(cut_cnt), 0)
+    cuts_meta = None if trim else [None] * max(int(cut_cnt), 0)
     for ci, o, s in cuts:
         dst = out / (f"{pre}.png" if single else f"{pre}_cut{ci:03d}.png")
         if dst.exists():
             sk += 1
-        elif cut_to_png(unp[o : o + s], dst, preserve_hidden_rgb=True):
+        elif cut_to_png(unp[o : o + s], dst, preserve_hidden_rgb=True, trim=trim):
             wrote += 1
-        if ci >= len(cuts_meta):
-            cuts_meta.extend([None] * (ci + 1 - len(cuts_meta)))
-        cuts_meta[ci] = _type2_extract_meta(ci, unp[o : o + s], outer_rects, dst.name)
-    layout_path = out / f"{pre}.type2.json"
-    if layout_path.exists():
-        sk += 1
-    else:
-        _dump_type2_layout_json(layout_path, canvas_w, canvas_h, cuts_meta)
-        wrote += 1
+        if cuts_meta is not None:
+            if ci >= len(cuts_meta):
+                cuts_meta.extend([None] * (ci + 1 - len(cuts_meta)))
+            cuts_meta[ci] = _type2_extract_meta(
+                ci, unp[o : o + s], outer_rects, dst.name
+            )
+    if cuts_meta is not None:
+        layout_path = out / f"{pre}.type2.json"
+        if layout_path.exists():
+            sk += 1
+        else:
+            _dump_type2_layout_json(layout_path, canvas_w, canvas_h, cuts_meta)
+            wrote += 1
     return ("skip", 0, sk) if wrote == 0 and sk > 0 else ("ok", wrote, sk)
 
 
@@ -411,7 +461,7 @@ def iter_g00(p):
     return [p] if p.is_file() else [x for x in sorted(p.glob("*.g00")) if x.is_file()]
 
 
-def run_extract(inp, out_dir):
+def run_extract(inp, out_dir, trim: bool = False):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     fs = iter_g00(inp)
@@ -419,7 +469,7 @@ def run_extract(inp, out_dir):
         return 2
     from .parallel import parallel_g00_extract
 
-    ok, sk, bad = parallel_g00_extract(fs, out_dir)
+    ok, sk, bad = parallel_g00_extract(fs, out_dir, trim=trim)
     print(f"Done. OK={ok} SKIP={sk} FAIL={bad}")
     return 0 if bad == 0 else 1
 
@@ -1536,7 +1586,14 @@ def main(argv=None):
         analyze_one(args[1])
         return 0
     if args[0] == "--x":
-        return run_extract(args[1], args[2]) if len(args) == 3 else 2
+        trim = False
+        rest = []
+        for a in args[1:]:
+            if a == "--trim" and not trim:
+                trim = True
+            else:
+                rest.append(a)
+        return run_extract(rest[0], rest[1], trim=trim) if len(rest) == 2 else 2
     if args[0] == "--c":
         parsed = _parse_compose_args(args)
         if parsed is None:

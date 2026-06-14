@@ -907,7 +907,7 @@ siglus-ssu -m --disam-apply <path_to_dat | path_to_dir> [--angou <path|angou=tex
 siglus-ssu -g --a <input_g00>
 
 # 将 .g00 提取为 PNG/JPEG
-siglus-ssu -g --x <input_g00 | input_dir> <output_dir>
+siglus-ssu -g --x [--trim] <input_g00 | input_dir> <output_dir>
 
 # 将多个 .g00 文件（或 cut）合并为单张 PNG
 siglus-ssu -g --m <input_g00[:cutNNN]> <input_g00[:cutNNN]> [...] [--o <output_dir>]
@@ -921,7 +921,8 @@ siglus-ssu -g --c [--type N] [--refer <ref_g00 | ref_dir>] <input_png | input_jp
 | 参数 | 说明 |
 |---|---|
 | `--a` | **分析**模式。打印类型、画布尺寸、LZSS 统计；对于 type2，还会输出最多前 50 个 cut 的详细信息。 |
-| `--x` | **提取**模式。解码每个 `.g00` 并写入 PNG 或 JPEG 文件；对于 type2，还会额外写出一份可回灌的 `.type2.json` sidecar。若目标图片或 JSON 已存在，则跳过而不覆盖。 |
+| `--x` | **提取**模式。解码每个 `.g00` 并写入 PNG 或 JPEG 文件；对于 type2，未使用 `--trim` 时还会额外写出一份可回灌的 `.type2.json` sidecar。若目标图片或 JSON 已存在，则跳过而不覆盖。 |
+| `--trim` | （仅提取模式）写出前裁剪导出的图片。PNG 输出会优先裁到非透明像素区域，若整张图均不透明则改用左上角背景色；JPEG 输出使用左上角背景色，且无需裁剪时保留原始 payload。启用裁剪时不会写出 type2 JSON sidecar。 |
 | `--m` | **合并**模式。将多个 `.g00` 图片或 cut 合成为一张 PNG。 |
 | `--c` | **创建/更新**模式。不带 `--refer` 时创建新的 `.g00`；带 `--refer` 时，以参考 `.g00` 为 base 更新图片数据。 |
 | `--o <output_dir>`, `-o`, `--output`, `--output-dir` | （仅合并模式）合并后 PNG 的输出目录。可省略；省略时输出到当前工作目录。 |
@@ -970,6 +971,7 @@ siglus-ssu -g --c /path/to/updated_pngs/ /path/to/out_g00/ --refer /path/to/orig
 ```
 
 目录输入的 `-g --x` 只扫描当前目录层级的 `.g00` 文件。
+使用 `--trim` 时不会写出 type2 `.type2.json` sidecar，因为裁剪后的图片不再是可直接重建的布局。
 
 #### 创建模式说明
 
@@ -1019,7 +1021,7 @@ siglus-ssu -g --c /path/to/updated_pngs/ /path/to/out_g00/ --refer /path/to/orig
 
 #### type2 提取与回灌资产
 
-使用 `-g --x` 提取 type2 `.g00` 时，会在图片旁边写出 JSON sidecar；若目标已存在则跳过：
+未使用 `--trim` 时，使用 `-g --x` 提取 type2 `.g00` 会在图片旁边写出 JSON sidecar；若目标已存在则跳过：
 - Single-cut（单 cut）：`<basename>.png` + `<basename>.type2.json`
 - Multi-cut（多 cut）：`<basename>_cut000.png`、`<basename>_cut001.png` ... + `<basename>.type2.json`
 
