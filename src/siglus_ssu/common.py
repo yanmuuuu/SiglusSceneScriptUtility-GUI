@@ -754,9 +754,16 @@ def list_named_paths(base_dir: str, target_name: str, recursive: bool = True):
     if not base_dir or (not os.path.isdir(base_dir)):
         return []
     out = []
-    p0 = os.path.join(base_dir, target_name)
-    if os.path.isfile(p0):
-        out.append(p0)
+    try:
+        names = os.listdir(base_dir)
+    except Exception:
+        names = []
+    for fn in names:
+        if not is_named_filename(fn, target_name):
+            continue
+        p = os.path.join(base_dir, fn)
+        if os.path.isfile(p):
+            out.append(p)
     if recursive:
         for dirpath, _, filenames in os.walk(base_dir):
             if dirpath == base_dir:
@@ -1077,21 +1084,8 @@ def looks_like_siglus_pck(blob: bytes) -> bool:
     return True
 
 
-def read_exe_el_key(path: str) -> bytes:
-    try:
-        b = read_bytes(path)
-    except Exception:
-        return b""
-    if len(b) == 16:
-        return bytes(b)
-    try:
-        t, _, _ = decode_text_auto(b)
-    except Exception:
-        try:
-            t = b.decode("utf-8", "ignore")
-        except Exception:
-            t = ""
-    t = str(t or "").strip()
+def parse_exe_el_key_text(text: str) -> bytes:
+    t = str(text or "").strip()
     if not t:
         return b""
     m = re.findall(r"0x([0-9a-fA-F]{2})", t, flags=re.IGNORECASE)
@@ -1116,6 +1110,23 @@ def read_exe_el_key(path: str) -> bytes:
     return b""
 
 
+def read_exe_el_key(path: str) -> bytes:
+    try:
+        b = read_bytes(path)
+    except Exception:
+        return b""
+    if len(b) == 16:
+        return bytes(b)
+    try:
+        t, _, _ = decode_text_auto(b)
+    except Exception:
+        try:
+            t = b.decode("utf-8", "ignore")
+        except Exception:
+            t = ""
+    return parse_exe_el_key_text(t)
+
+
 def angou_to_exe_el(text: str) -> bytes:
     s = angou_first_line(text)
     if not s:
@@ -1124,26 +1135,306 @@ def angou_to_exe_el(text: str) -> bytes:
     return el if el and len(el) == 16 else b""
 
 
-def find_exe_el(
-    base_dir: str, recursive: bool = True, force_charset: str = ""
-) -> bytes:
-    p = find_named_path(base_dir, ANGOU_DAT_NAME, recursive=recursive)
-    if p:
-        el = angou_to_exe_el(
-            read_angou_first_line(p, force_charset=(force_charset or ""))
+def format_exe_el(el: bytes) -> str:
+    b = bytes(el or b"")
+    if len(b) != 16:
+        return "<none>"
+    return ", ".join(f"0x{x:02X}" for x in b)
+
+
+def format_exe_el_source(src) -> str:
+    if not isinstance(src, dict):
+        return f"source=<direct> kind=bytes exe_el={format_exe_el(src or b'')}"
+    parts = [
+        f"source={src.get('label') or src.get('kind') or '<unknown>'}",
+        f"kind={src.get('kind') or '<unknown>'}",
+    ]
+    if src.get("path"):
+        parts.append(f"path={src.get('path')}")
+    if src.get("inner"):
+        parts.append(f"inner={src.get('inner')}")
+    if src.get("angou"):
+        parts.append(f"angou={src.get('angou')}")
+    parts.append(f"exe_el={format_exe_el(src.get('exe_el') or b'')}")
+    return " ".join(parts)
+
+
+def consume_angou_option(argv):
+    args = list(argv or [])
+    out = []
+    value = ""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--angou":
+            if value:
+                raise ValueError("--angou specified more than once")
+            if i + 1 >= len(args):
+                raise ValueError("--angou requires a value")
+            if i + 2 != len(args):
+                raise ValueError("--angou must be the final option")
+            value = str(args[i + 1])
+            if not value.strip():
+                raise ValueError("--angou requires a value")
+            if value.casefold() in ("angou=", "key="):
+                raise ValueError("--angou requires a value")
+            i += 2
+            continue
+        if str(a).startswith("--angou="):
+            raise ValueError("--angou requires a separate value")
+        out.append(a)
+        i += 1
+    return out, value
+
+
+def iter_exe_el_sources(
+    explicit_angou: str = "",
+    input_path: str = "",
+    base_dir: str = "",
+    input_blob: bytes = b"",
+    include_parent: bool = True,
+    force_charset: str = "",
+):
+    seen = set()
+
+    def add(el, kind, path="", label="", angou=""):
+        if not el or len(el) != 16:
+            return None
+        b = bytes(el)
+        if b in seen:
+            return None
+        seen.add(b)
+        return {
+            "exe_el": b,
+            "kind": str(kind or ""),
+            "path": str(path or ""),
+            "label": str(label or kind or ""),
+            "angou": str(angou or ""),
+        }
+
+    def add_angou_text(text, kind, path="", label=""):
+        s = angou_first_line(text)
+        return add(angou_to_exe_el(s), kind, path=path, label=label, angou=s)
+
+    def add_pck(path, label, blob=b""):
+        try:
+            data = bytes(blob) if blob else read_bytes(path)
+        except Exception:
+            return []
+        if not data:
+            return []
+        cf = os.path.basename(str(path or "")).casefold()
+        if (not cf.endswith(".pck")) and (not looks_like_siglus_pck(data)):
+            return []
+        try:
+            from . import pck as _pck
+
+            items = list(_pck.iter_pck_angou_dat_items(data) or [])
+        except Exception:
+            items = []
+        out = []
+        for item in items:
+            raw = bytes(item.get("raw") or b"")
+            s = decode_angou_first_line(raw, force_charset=force_charset)
+            src = add(
+                angou_to_exe_el(s),
+                "pck_angou",
+                path=path,
+                label=label,
+                angou=s,
+            )
+            if src:
+                inner = str(item.get("name") or ANGOU_DAT_NAME)
+                src["inner"] = inner
+                out.append(src)
+        return out
+
+    def add_file(path, label):
+        bn = os.path.basename(str(path or ""))
+        cf = bn.casefold()
+        out = []
+        if cf.endswith(".pck"):
+            out.extend(add_pck(path, label))
+            return out
+        try:
+            data = read_bytes(path)
+        except Exception:
+            data = b""
+        if data and looks_like_siglus_pck(data):
+            out.extend(add_pck(path, label, blob=data))
+            return out
+        if is_named_filename(bn, ANGOU_DAT_NAME):
+            src = add_angou_text(
+                read_angou_first_line(path, force_charset=force_charset),
+                "angou_dat",
+                path=path,
+                label=label,
+            )
+            if src:
+                out.append(src)
+            return out
+        if is_named_filename(bn, KEY_TXT_NAME):
+            src = add(read_exe_el_key(path), "key_txt", path=path, label=label)
+            if src:
+                out.append(src)
+            return out
+        if cf.startswith("siglusengine") and cf.endswith(".exe"):
+            src = add(
+                read_siglus_engine_exe_el(path),
+                "siglusengine_exe",
+                path=path,
+                label=label,
+            )
+            if src:
+                out.append(src)
+        return out
+
+    def scene_pck_paths(path):
+        if not path or not os.path.isdir(path):
+            return []
+        try:
+            entries = list(os.scandir(path))
+        except Exception:
+            entries = []
+        hits = []
+        others = []
+        for e in entries:
+            if not e.is_file():
+                continue
+            cf = e.name.casefold()
+            if cf == "scene.pck":
+                hits.append(_safe_abspath(e.path))
+                continue
+            if cf.startswith("scene") and cf.endswith(".pck"):
+                others.append(_safe_abspath(e.path))
+        hits.sort(
+            key=lambda p: (
+                0 if os.path.basename(p) == "Scene.pck" else 1,
+                os.path.basename(p).casefold(),
+                os.path.basename(p),
+            )
         )
-        if el:
-            return el
-    kp = find_named_path(base_dir, KEY_TXT_NAME, recursive=recursive)
-    if kp:
-        el = read_exe_el_key(kp)
-        if el and len(el) == 16:
-            return el
-    ep = find_siglus_engine_exe(base_dir)
-    if ep:
-        el = read_siglus_engine_exe_el(ep)
-        if el and len(el) == 16:
-            return el
+        others.sort(
+            key=lambda p: (len(os.path.basename(p)), os.path.basename(p).casefold())
+        )
+        return hits + others
+
+    def add_dir(path, label):
+        out = []
+        for p in scene_pck_paths(path):
+            out.extend(add_pck(p, label))
+        p = find_named_path(path, ANGOU_DAT_NAME, recursive=False)
+        if p:
+            src = add_angou_text(
+                read_angou_first_line(p, force_charset=force_charset),
+                "angou_dat",
+                path=p,
+                label=label,
+            )
+            if src:
+                out.append(src)
+        kp = find_named_path(path, KEY_TXT_NAME, recursive=False)
+        if kp:
+            src = add(read_exe_el_key(kp), "key_txt", path=kp, label=label)
+            if src:
+                out.append(src)
+        ep = find_siglus_engine_exe(path)
+        if ep:
+            src = add(
+                read_siglus_engine_exe_el(ep),
+                "siglusengine_exe",
+                path=ep,
+                label=label,
+            )
+            if src:
+                out.append(src)
+        return out
+
+    def add_dir_with_parent(path, label):
+        out = []
+        if path and os.path.isdir(path):
+            ap = _safe_abspath(path)
+            out.extend(add_dir(ap, label))
+            if include_parent:
+                parent = os.path.dirname(ap)
+                if parent and parent != ap:
+                    out.extend(add_dir(parent, "parent_dir"))
+        return out
+
+    explicit = str(explicit_angou or "").strip()
+    stop_parent_after_explicit_path = False
+    if explicit:
+        low = explicit.casefold()
+        if low.startswith("key="):
+            src = add(
+                parse_exe_el_key_text(explicit.split("=", 1)[1]),
+                "key_literal",
+                label="explicit",
+            )
+            if not src:
+                raise ValueError("invalid --angou key value")
+            yield src
+        elif low.startswith("angou="):
+            src = add_angou_text(
+                explicit.split("=", 1)[1],
+                "angou_literal",
+                label="explicit",
+            )
+            if not src:
+                raise ValueError("invalid --angou angou value")
+            yield src
+        else:
+            stop_parent_after_explicit_path = True
+            p = os.path.abspath(explicit)
+            if not os.path.exists(p):
+                raise ValueError(
+                    f"not found: {explicit}; use angou=... for literal angou text"
+                )
+            if os.path.isdir(p):
+                found = add_dir(p, "explicit_dir")
+            else:
+                found = add_file(p, "explicit_file")
+            if not found:
+                raise ValueError(f"could not derive exe_el from --angou: {explicit}")
+            for src in found:
+                yield src
+    ip = str(input_path or "")
+    if ip and os.path.isfile(ip):
+        for src in add_pck(ip, "input_pck", blob=input_blob):
+            yield src
+    if base_dir:
+        scan_base = os.path.abspath(base_dir)
+    elif ip:
+        scan_base = (
+            os.path.abspath(ip)
+            if os.path.isdir(ip)
+            else os.path.dirname(os.path.abspath(ip))
+        )
+    else:
+        scan_base = ""
+    if scan_base:
+        if stop_parent_after_explicit_path:
+            for src in add_dir(scan_base, "current_dir"):
+                yield src
+        else:
+            for src in add_dir_with_parent(scan_base, "current_dir"):
+                yield src
+
+
+def find_exe_el(
+    base_dir: str, include_parent: bool = True, force_charset: str = ""
+) -> bytes:
+    try:
+        for src in iter_exe_el_sources(
+            base_dir=base_dir,
+            include_parent=bool(include_parent),
+            force_charset=(force_charset or ""),
+        ):
+            el = src.get("exe_el") if isinstance(src, dict) else b""
+            if el and len(el) == 16:
+                return bytes(el)
+    except Exception:
+        return b""
     return b""
 
 

@@ -4,9 +4,11 @@ from .common import (
     iter_files_by_ext,
     looks_like_siglus_dat,
     parse_gei_disam_args,
+    consume_angou_option,
     read_bytes,
     new_disam_stats,
     write_disam_totals,
+    format_exe_el_source,
 )
 from . import GEI
 from . import pck
@@ -19,11 +21,24 @@ def _default_output_dir(input_path: str) -> str:
     return os.path.dirname(input_path)
 
 
-def _disassemble_dat_dir(input_dir: str, output_dir: str) -> int:
+def _disassemble_dat_dir(
+    input_dir: str, output_dir: str, explicit_angou: str = ""
+) -> int:
     from . import dat as D
 
     input_dir = os.path.abspath(input_dir)
     output_dir = os.path.abspath(output_dir)
+    try:
+        exe_el_candidates = list(
+            pck.iter_exe_el_candidates(
+                input_dir,
+                explicit_angou=explicit_angou,
+                with_sources=True,
+            )
+        )
+    except ValueError as e:
+        sys.stderr.write(str(e) + "\n")
+        return 2
     try:
         dat_paths = iter_files_by_ext(input_dir, [".dat"], recursive=False)
     except Exception as e:
@@ -42,6 +57,9 @@ def _disassemble_dat_dir(input_dir: str, output_dir: str) -> int:
             sys.stdout.write(f"Skipped: {name}\n")
             skip_cnt += 1
             continue
+        blob, _used = D.decode_scn_dat_with_candidates(
+            blob, exe_el_candidates, trace=True
+        )
         if not looks_like_siglus_dat(blob):
             sys.stdout.write(f"Skipped: {name}\n")
             skip_cnt += 1
@@ -73,6 +91,11 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     args = list(argv)
+    try:
+        args, explicit_angou = consume_angou_option(args)
+    except ValueError as e:
+        sys.stderr.write(str(e) + "\n")
+        return 2
     dat_txt = False
     try:
         args, gei, dat_txt = parse_gei_disam_args(
@@ -85,6 +108,17 @@ def main(argv=None):
         return 2
     if not args or args[0] in ("-h", "--help", "help"):
         return 2
+    if explicit_angou:
+        try:
+            list(
+                pck.iter_exe_el_candidates(
+                    "",
+                    explicit_angou=explicit_angou,
+                )
+            )
+        except ValueError as e:
+            sys.stderr.write(str(e) + "\n")
+            return 2
     if gei:
         if len(args) == 1:
             in_path = args[0]
@@ -96,17 +130,34 @@ def main(argv=None):
         if os.path.isdir(in_path):
             in_path = os.path.join(in_path, "Gameexe.dat")
         os_dir = os.path.dirname(os.path.abspath(in_path))
-        cands = list(pck.iter_exe_el_candidates(os_dir))
+        try:
+            cands = list(
+                pck.iter_exe_el_candidates(
+                    os_dir,
+                    explicit_angou=explicit_angou,
+                    with_sources=True,
+                )
+            )
+        except ValueError as e:
+            sys.stderr.write(str(e) + "\n")
+            return 2
         if not cands:
             cands = [b""]
         last_err = None
-        for exe_el in cands:
+        for cand in cands:
+            src = cand if isinstance(cand, dict) else {"exe_el": cand, "kind": "bytes"}
+            exe_el = src.get("exe_el") if isinstance(src, dict) else cand
+            sys.stderr.write(f"key source try: {format_exe_el_source(src)}\n")
             try:
                 out_path = GEI.restore_gameexe_ini(in_path, out_dir, exe_el=exe_el)
+                sys.stderr.write(f"key source accepted: {format_exe_el_source(src)}\n")
                 sys.stdout.write(f"Wrote: {out_path}\n")
                 return 0
             except Exception as e:
                 last_err = e
+                sys.stderr.write(
+                    f"key source rejected, falling back: {format_exe_el_source(src)}\n"
+                )
         sys.stderr.write(str(last_err) + "\n")
         return 1
     if len(args) == 1:
@@ -122,8 +173,13 @@ def main(argv=None):
     else:
         return 2
     if dat_txt and os.path.isdir(in_path):
-        return _disassemble_dat_dir(in_path, out_dir)
+        return _disassemble_dat_dir(in_path, out_dir, explicit_angou=explicit_angou)
     if os.path.isdir(in_path):
         sys.stderr.write("Directory input requires --disam or --gei\n")
         return 2
-    return pck.extract_pck(in_path, out_dir, dat_txt)
+    return pck.extract_pck(
+        in_path,
+        out_dir,
+        dat_txt,
+        explicit_angou=explicit_angou,
+    )

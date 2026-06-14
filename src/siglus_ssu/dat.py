@@ -25,11 +25,13 @@ from .common import (
     unique_out_path,
     write_text,
     ANGOU_DAT_NAME,
+    looks_like_siglus_dat,
     new_disam_stats,
     add_elapsed_seconds,
     read_scn_metadata,
     write_status,
     write_disam_totals,
+    format_exe_el_source,
 )
 
 C = get_const_module()
@@ -787,18 +789,73 @@ def dat(path, blob: bytes, disam_out_dir=None) -> int:
     return 0
 
 
-def _gei_decode_txt(path):
+def decode_scn_dat_with_candidates(blob: bytes, candidates=None, trace: bool = False):
+    if looks_like_siglus_dat(blob):
+        return bytes(blob), b""
+    try:
+        from . import textmap as _textmap
+    except Exception:
+        return bytes(blob), b""
+    cands = list(candidates or [])
+    if not cands:
+        cands = [b""]
+    for cand in cands:
+        src = cand if isinstance(cand, dict) else {"exe_el": cand, "kind": "bytes"}
+        exe_el = src.get("exe_el") if isinstance(src, dict) else cand
+        if trace:
+            sys.stderr.write(f"key source try: {format_exe_el_source(src)}\n")
+        try:
+            parsed, plain_blob, _enc = _textmap._parse_scn_dat_with_decrypt(
+                blob, exe_el
+            )
+        except Exception:
+            parsed = None
+            plain_blob = blob
+        if parsed and looks_like_siglus_dat(plain_blob):
+            if trace:
+                sys.stderr.write(f"key source accepted: {format_exe_el_source(src)}\n")
+            return bytes(plain_blob), bytes(exe_el or b"")
+        if trace:
+            sys.stderr.write(
+                f"key source rejected, falling back: {format_exe_el_source(src)}\n"
+            )
+    return bytes(blob), b""
+
+
+def _gei_decode_txt(path, explicit_angou: str = ""):
     blob = read_bytes(path)
     if not blob or len(blob) < 8:
         raise RuntimeError("Invalid Gameexe.dat: too small")
     _, mode = struct.unpack_from("<ii", blob, 0)
-    exe_el = b""
+    cands = [b""]
     if int(mode) != 0:
-        exe_el = pck.compute_exe_el(os.path.dirname(os.path.abspath(path)))
+        cands = list(
+            pck.iter_exe_el_candidates(
+                os.path.dirname(os.path.abspath(path)),
+                explicit_angou=explicit_angou,
+                with_sources=True,
+            )
+        )
+        if not cands:
+            cands = [b""]
     from . import GEI
 
-    info, txt = GEI.read_gameexe_dat(path, exe_el=exe_el)
-    return info, txt
+    last = None
+    for cand in cands:
+        src = cand if isinstance(cand, dict) else {"exe_el": cand, "kind": "bytes"}
+        exe_el = src.get("exe_el") if isinstance(src, dict) else cand
+        sys.stderr.write(f"key source try: {format_exe_el_source(src)}\n")
+        info, txt = GEI.read_gameexe_dat(path, exe_el=exe_el)
+        last = (info, txt)
+        if int(mode) == 0 or (info.get("used_exe_el") and txt and info.get("ini_ok")):
+            sys.stderr.write(f"key source accepted: {format_exe_el_source(src)}\n")
+            return info, txt
+        sys.stderr.write(
+            f"key source rejected, falling back: {format_exe_el_source(src)}\n"
+        )
+    if last is not None:
+        return last
+    return {}, ""
 
 
 def _parse_gameexe_ini_configs(txt):
@@ -821,7 +878,7 @@ def _parse_gameexe_ini_configs(txt):
     return m
 
 
-def analyze_gameexe_dat(path):
+def analyze_gameexe_dat(path, explicit_angou: str = ""):
     import sys
 
     if not os.path.exists(path):
@@ -841,14 +898,9 @@ def analyze_gameexe_dat(path):
         return 1
     hdr0, mode = struct.unpack_from("<ii", blob, 0)
     payload_size = max(0, len(blob) - 8)
-    exe_el = b""
-    if int(mode) != 0:
-        exe_el = pck.compute_exe_el(os.path.dirname(os.path.abspath(path)))
-    from . import GEI
-
     info = None
     try:
-        info, _ = GEI.read_gameexe_dat(path, exe_el=exe_el)
+        info, _ = _gei_decode_txt(path, explicit_angou=explicit_angou)
     except Exception as e:
         sys.stderr.write(str(e) + "\n")
         return 1
@@ -857,7 +909,7 @@ def analyze_gameexe_dat(path):
     print(f"mode: {int(mode):d}")
     print(f"payload_size: {payload_size:d} bytes ({hx(payload_size)})")
     if int(mode) != 0:
-        print(f"exe_el: {('present' if exe_el else 'missing')}")
+        print(f"exe_el: {('present' if info.get('used_exe_el') else 'missing')}")
     lz0, lz1 = info.get("lzss_header") or (0, 0)
     print(f"lzss_header: {int(lz0):d}, {int(lz1):d}")
     print(
@@ -868,6 +920,8 @@ def analyze_gameexe_dat(path):
     )
     if info.get("warning"):
         print(f"warning: {info.get('warning')}")
+    if int(mode) != 0 and not info.get("ini_ok"):
+        print("warning: failed to validate Gameexe.ini text")
     print()
     print("==== Structure ====")
     print("0x00000000: header (<ii>) 8 bytes")
@@ -876,12 +930,10 @@ def analyze_gameexe_dat(path):
     return 0
 
 
-def compare_gameexe_dat(p1, p2):
+def compare_gameexe_dat(p1, p2, explicit_angou: str = ""):
     if not os.path.exists(p1) or not os.path.exists(p2):
         sys.stderr.write("not found\n")
         return 2
-    d1 = os.path.dirname(os.path.abspath(p1)) or "."
-    d2 = os.path.dirname(os.path.abspath(p2)) or "."
     b1 = read_bytes(p1)
     b2 = read_bytes(p2)
     if (not b1) or len(b1) < 8 or (not b2) or len(b2) < 8:
@@ -889,21 +941,17 @@ def compare_gameexe_dat(p1, p2):
         return 1
     _, m1 = struct.unpack_from("<ii", b1, 0)
     _, m2 = struct.unpack_from("<ii", b2, 0)
-    if int(m1) != 0 and (not pck.compute_exe_el(d1)):
-        sys.stderr.write(
-            "Missing exe angou key under first Gameexe.dat folder (need \u6697\u53f7.dat or key.txt).\n"
-        )
-        return 1
-    if int(m2) != 0 and (not pck.compute_exe_el(d2)):
-        sys.stderr.write(
-            "Missing exe angou key under second Gameexe.dat folder (need \u6697\u53f7.dat or key.txt).\n"
-        )
-        return 1
     try:
-        _, t1 = _gei_decode_txt(p1)
-        _, t2 = _gei_decode_txt(p2)
+        info1, t1 = _gei_decode_txt(p1, explicit_angou=explicit_angou)
+        info2, t2 = _gei_decode_txt(p2, explicit_angou=explicit_angou)
     except Exception as e:
         sys.stderr.write(str(e) + "\n")
+        return 1
+    if int(m1) != 0 and not info1.get("ini_ok"):
+        sys.stderr.write("Failed to decode first Gameexe.dat payload.\n")
+        return 1
+    if int(m2) != 0 and not info2.get("ini_ok"):
+        sys.stderr.write("Failed to decode second Gameexe.dat payload.\n")
         return 1
     c1 = _parse_gameexe_ini_configs(t1)
     c2 = _parse_gameexe_ini_configs(t2)

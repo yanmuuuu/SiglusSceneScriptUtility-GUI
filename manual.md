@@ -336,13 +336,13 @@ Extracts a `.pck` scene file into a timestamped directory containing decoded sce
 
 ```bash
 # Extract a .pck file
-siglus-ssu -x [--disam] <input_pck> [output_dir]
+siglus-ssu -x [--disam] <input_pck> [output_dir] [--angou <path|angou=text|key=bytes>]
 
 # Batch-disassemble and decompile `.dat` files from a directory
-siglus-ssu -x --disam <input_dir> [output_dir]
+siglus-ssu -x --disam <input_dir> [output_dir] [--angou <path|angou=text|key=bytes>]
 
 # Restore Gameexe.ini from Gameexe.dat
-siglus-ssu -x --gei <Gameexe.dat | input_dir> [output_dir]
+siglus-ssu -x --gei <Gameexe.dat | input_dir> [output_dir] [--angou <path|angou=text|key=bytes>]
 ```
 
 #### Parameters
@@ -353,7 +353,8 @@ siglus-ssu -x --gei <Gameexe.dat | input_dir> [output_dir]
 | `<input_dir>` | Path to a directory scanned for `.dat` files when `--disam` is enabled. Only the immediate `.dat` files in that directory are processed. |
 | `<output_dir>` | Directory where extracted files will be written. Optional for all `-x` modes. If omitted, output defaults to the input file directory, or to the input directory itself when the input is a directory. |
 | `--disam` | With `.pck` input, also write `<scene>.dat.txt` disassembly plus reconstructed `decompiled/<scene>.ss` files and `decompiled/__decompiled.inc`. With directory input, scan only that directory's immediate `.dat` files and write `.dat.txt` plus `decompiled/*.ss` into `<output_dir>`. Cannot be combined with `--gei`. Non-scene `.dat` files are skipped. |
-| `--gei` | Instead of extracting a `.pck`, decode a `Gameexe.dat` binary back to a `Gameexe.ini` plaintext file. The input can be the `.dat` file itself or its parent directory. Automatically detects nearby `暗号.dat`, `key.txt`, `SiglusEngine*.exe`, or embedded `暗号.dat` data from `Scene.pck` to derive candidate decryption keys. |
+| `--angou <path\|angou=text\|key=bytes>` | Override or supplement the scene/Gameexe decryption key source. Uses the common key-source rules described in [`-a` / `--analyze`](#-a----analyze--analyze-and-compare-files). |
+| `--gei` | Instead of extracting a `.pck`, decode a `Gameexe.dat` binary back to a `Gameexe.ini` plaintext file. The input can be the `.dat` file itself or its parent directory. Key candidates are tried using the common key-source rules. |
 
 With `.pck` input, extracted files are written into `output_YYYYMMDD_HHMMSS/`. When embedded original sources are present, they are restored there alongside the decoded scene `.dat` files. A `--disam` run also prints total disassembly, decompile-hints, and decompile timing summaries.
 
@@ -370,6 +371,9 @@ siglus-ssu -x /path/to/Scene.pck
 
 # Extract with `.dat` disassembly and decompiled `.ss`
 siglus-ssu -x --disam /path/to/Scene.pck /path/to/translation_work/
+
+# Extract encrypted scenes using an explicit key source
+siglus-ssu -x /path/to/Scene.pck /path/to/translation_work/ --angou /path/to/game_dir/
 
 # Batch-disassemble and decompile the `.dat` files in one directory
 siglus-ssu -x --disam /path/to/scene_dir/
@@ -391,20 +395,27 @@ Analyzes the internal structure of a supported binary file and prints a detailed
 #### Syntax
 
 ```
-# Analyze a single file
-siglus-ssu -a [--disam] [--readall|--apply] <input_file>
+# Analyze a .pck or .dat file
+siglus-ssu -a [--disam] <input_file.(pck|dat)> [--angou <path|angou=text|key=bytes>]
+
+# Analyze or update other supported files
+siglus-ssu -a [--readall|--apply] <input_file.sav>
+siglus-ssu -a <input_file.(gan|sav|cgm|tcr)>
 
 # Count dialogue units in a .pck only and write per-file CSV
-siglus-ssu -a --word <input_pck> [output_csv]
+siglus-ssu -a --word <input_pck> [output_csv] [--angou <path|angou=text|key=bytes>]
 
-# Compare two files; same-type pairs use structural comparison, different types are analyzed separately
+# Compare two .pck or .dat files
+siglus-ssu -a [--payload] [--disam] <input_file_1.(pck|dat)> <input_file_2.(pck|dat)> [--angou <path|angou=text|key=bytes>]
+
+# Compare two files without an explicit key source
 siglus-ssu -a [--payload] [--disam] <input_file_1> <input_file_2>
 
-# Analyze or derive the exe_el key from 暗号.dat / Scene.pck / SiglusEngine.exe / directory / literal string
-siglus-ssu -a <path_to_暗号.dat | Scene.pck | SiglusEngine.exe | dir | literal_angou> --angou
+# Analyze or derive the exe_el key from a key source
+siglus-ssu -a --angou <path|angou=text|key=bytes>
 
 # Analyze or compare Gameexe.dat
-siglus-ssu -a --gei <Gameexe.dat> [Gameexe.dat_2]
+siglus-ssu -a --gei <Gameexe.dat> [Gameexe.dat_2] [--angou <path|angou=text|key=bytes>]
 ```
 
 #### Parameters
@@ -416,10 +427,12 @@ siglus-ssu -a --gei <Gameexe.dat> [Gameexe.dat_2]
 | `--disam` | When analyzing a `.dat` file or comparing two `.dat` files, write human-readable disassembly to `<scene>.dat.txt` alongside each input `.dat`, and also emit reconstructed `decompiled/<scene>.ss` and `decompiled/__decompiled.inc`. Prints total disassembly, decompile-hints, and decompile timing summaries before the command finishes. The decompiler output is still experimental and should not be treated as a reliable source-of-truth. |
 | `--readall` | Only meaningful for `read.sav` and `global.sav`. For `read.sav`: set all read-flag bits to `1` (marking every scene as read). For `global.sav`: unlock engine-managed collection fields in-place, currently `cg_table`, `bgm_table`, and `chrkoe.look_flag` when present. A non-overwriting `.bak` backup is created before writing. Cannot be combined with `--apply`, compare mode, `--word`, `--angou`, or `--gei`; `--disam` and `--payload` do not change this single-file `.sav` operation. Unrelated generic global flag arrays and external achievement backends such as Steam are not modified. |
 | `--apply` | For `global.sav` only: read the sibling `global.txt` with the same base name, apply editable `G[n]`, `Z[n]`, `cg_table[n]`, `bgm_table[n]`, and `chrkoe[n].look_flag` entries, create a non-overwriting `.bak` backup, and rewrite the `.sav` in-place. Other generated fields such as `M`, `global_namae`, and character display names are ignored. Cannot be combined with `--readall`, compare mode, `--disam`, `--payload`, `--word`, `--angou`, or `--gei`. |
-| `--word` | For `.pck` only: skips normal structural analysis, counts dialogue units for each decoded scene `.dat` and each embedded `.ss` source file, prints the per-file counts, and writes them to CSV. If `[output_csv]` is omitted, the CSV is written as `<input_pck_stem>.word.csv` next to the input `.pck`; if `[output_csv]` is an existing directory or ends with a path separator, that default CSV filename is written inside it. |
+| `--word` | For `.pck` only: skips normal structural analysis, counts dialogue units for each decoded scene `.dat` and each embedded `.ss` source file, prints the per-file counts, and writes them to CSV. If `[output_csv]` is omitted, the CSV is written as `<input_pck_stem>.word.csv` next to the input `.pck`; if `[output_csv]` is an existing directory or ends with a path separator, that default CSV filename is written inside it. Can be combined with `--angou`. |
 | `--payload` | **(Compare mode only)** For `.pck` and `.dat` comparisons, additionally compare normalized decoded/decompressed `scn_bytes` semantics. This ignores string-pool `str_id` differences when the resolved text is the same. `.pck` results distinguish `same`, `text_only` for resolved text changes only, `real_diff` for non-text scene-bytecode differences, and `-` when payload comparison is unavailable; `.dat` results use `identical`, `text_only`, `real_diff`, or `unavailable`. It is more expensive than a plain structural comparison, but helps distinguish text-only translation changes from real scene-behavior changes. |
-| `--angou` | Parse the input as a `暗号.dat`, extract embedded `暗号.dat` from a `.pck`, read `SiglusEngine*.exe` / a directory containing one, or use a literal angou string directly, then derive and print the `exe_el` key (the 16-byte key shown in `key.txt` format). Existing paths are treated as files/directories first; non-existing path-like arguments still report `not found`. |
-| `--gei` | Analyze or compare `Gameexe.dat` files instead of general binary files. This mode rejects other analyze modifiers such as `--disam`, `--readall`, `--apply`, `--payload`, `--word`, and `--angou`. |
+| `--angou <path\|angou=text\|key=bytes>` | Explicit key source for `.pck`/`.dat` analysis, `.pck` word count, `Gameexe.dat` analysis, or standalone key derivation. `--angou` must be the final option in the command, must use the separated form `--angou VALUE`, and its value cannot be empty. A bare value is always treated as a path to a file or directory. Use `angou=text` for a literal `暗号.dat` first line, and `key=bytes` for a literal 16-byte `exe_el` key such as `key=0xA9,0x86,...`. During decryption, candidates are tried in order: explicit `--angou`; embedded `暗号.dat` inside the input `.pck`; current directory; parent directory. Lower-priority candidates are used only after a higher-priority source produced a key and that key failed validation; a missing, malformed, or keyless explicit source is reported as an input error. If `--angou` is a bare path, parent-directory probing is disabled for that request, so fallback stops after the current directory. Directory probing is not recursive. Inside each probed directory, the order is `Scene.pck`, then `Scene*.pck`, then `暗号.dat`, then `key.txt`, then `SiglusEngine*.exe`. |
+| `--gei` | Analyze or compare `Gameexe.dat` files instead of general binary files. This mode can use `--angou`, but rejects other analyze modifiers such as `--disam`, `--readall`, `--apply`, `--payload`, and `--word`. |
+
+Key-source diagnostics are printed to stderr whenever a decryption candidate is tried: each line includes the source, kind, path or inner file when applicable, the concrete `exe_el` value, and whether that candidate was accepted or rejected before falling back.
 
 #### Examples
 
@@ -435,6 +448,9 @@ siglus-ssu -a --word /path/to/Scene.pck /path/to/scene_counts.csv
 
 # Analyze a compiled .dat script — prints header fields and string pool
 siglus-ssu -a /path/to/script.dat
+
+# Analyze an encrypted .dat script using a directory key source
+siglus-ssu -a /path/to/script.dat --angou /path/to/game_dir/
 
 # Compare two versions of Scene.pck — reports file additions, removals, and changes
 siglus-ssu -a /path/to/Scene_original.pck /path/to/Scene_translated.pck
@@ -456,16 +472,19 @@ siglus-ssu -a /path/to/savedata/global.sav
 siglus-ssu -a --apply /path/to/savedata/global.sav
 
 # Derive the exe_el key from 暗号.dat
-siglus-ssu -a /path/to/暗号.dat --angou
+siglus-ssu -a --angou /path/to/暗号.dat
 
 # Derive the exe_el key directly from a literal angou string
-siglus-ssu -a --angou "literal_angou_string"
+siglus-ssu -a --angou "angou=literal_angou_string"
 
 # Derive the exe_el key from the SiglusEngine executable directly
-siglus-ssu -a /path/to/SiglusEngine.exe --angou
+siglus-ssu -a --angou /path/to/SiglusEngine.exe
 
-# Derive the exe_el key from a game directory (auto-detects 暗号.dat or exe)
-siglus-ssu -a /path/to/game_dir/ --angou
+# Derive the exe_el key from a literal 16-byte key
+siglus-ssu -a --angou "key=0xA9,0x86,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00"
+
+# Derive the exe_el key from a game directory
+siglus-ssu -a --angou /path/to/game_dir/
 ```
 
 #### Output Format (`.pck` example)
@@ -606,7 +625,7 @@ In normal mode, the command also generates a `koe_master.csv` manifest listing a
 #### Syntax
 
 ```
-siglus-ssu -k [--stats-only] <scene_input> <voice_dir> <output_dir>
+siglus-ssu -k [--stats-only] <scene_input> <voice_dir> <output_dir> [--angou <path|angou=text|key=bytes>]
 siglus-ssu -k [--stats-only] --single KOE_NO <voice_dir> <output_dir>
 ```
 
@@ -617,6 +636,7 @@ siglus-ssu -k [--stats-only] --single KOE_NO <voice_dir> <output_dir>
 | `<scene_input>` | Path to `Scene.pck`, a single scene `.dat`, or a directory tree of scene `.dat` files. Required in normal mode; not used with `--single`. |
 | `<voice_dir>` | Path to the flat top-level directory containing `.ovk` voice archive files (typically named `z0001.ovk`, `z0002.ovk`, etc.). Can also be a direct path to a single `.ovk` file. In directory mode, only `.ovk` files in that directory itself are scanned; the search is not recursive and character subdirectories are not inspected. |
 | `<output_dir>` | Directory where extracted `.ogg` files will be written. In normal mode, `koe_master.csv` is also written there. With `--single`, the extracted file is written directly under `<output_dir>`. |
+| `--angou <path\|angou=text\|key=bytes>` | Key source used when scanning encrypted `Scene.pck` or scene `.dat` input. Uses the common key-source rules described in [`-a` / `--analyze`](#-a----analyze--analyze-and-compare-files). Not valid with `--single`. |
 | `--stats-only` | Prints the summary and does not write any `.ogg` files. In normal mode it still writes `koe_master.csv`; with `--single`, no CSV is written. |
 | `--single KOE_NO` | Only extracts the specified global KOE number. In this mode, no scene input is required, no `koe_master.csv` is generated, no character-name or `unreferenced` subdirectories are created, and the output file is written directly as `<output_dir>/KOE(XXXXXXXXX).ogg`. |
 
@@ -646,6 +666,9 @@ With `--single`, the output structure becomes:
 ```bash
 # Collect all voice files directly from Scene.pck
 siglus-ssu -k /path/to/Scene.pck /path/to/voice/ /path/to/voice_out/
+
+# Collect from encrypted scene data using an explicit key source
+siglus-ssu -k /path/to/Scene.pck /path/to/voice/ /path/to/voice_out/ --angou /path/to/game_dir/
 
 # Collect from a decoded scene `.dat` directory
 siglus-ssu -k /path/to/scene_dir/ /path/to/voice/ /path/to/voice_out/
@@ -762,10 +785,10 @@ siglus-ssu -m <path_to_ss | path_to_dir>
 siglus-ssu -m --apply <path_to_ss | path_to_dir>
 
 # Export string list from compiled .dat file(s)
-siglus-ssu -m --disam <path_to_dat | path_to_dir>
+siglus-ssu -m --disam <path_to_dat | path_to_dir> [--angou <path|angou=text|key=bytes>]
 
 # Apply translated string list back to compiled .dat file(s)
-siglus-ssu -m --disam-apply <path_to_dat | path_to_dir>
+siglus-ssu -m --disam-apply <path_to_dat | path_to_dir> [--angou <path|angou=text|key=bytes>]
 ```
 
 #### Parameters
@@ -777,6 +800,7 @@ siglus-ssu -m --disam-apply <path_to_dat | path_to_dir>
 | `--apply`, `-a` | Apply a `.ss.csv` text map back to the corresponding `.ss` file in-place. The `.ss.csv` must already exist alongside the `.ss` file. |
 | `--disam` | Export the string list from a compiled `.dat` to a `.dat.csv` file alongside the `.dat`. Works on encrypted, LZSS-compressed, or raw `.dat` files. When given a directory, `.dat` files are recursively scanned, and `Gameexe.dat` and `暗号.dat` are automatically excluded. |
 | `--disam-apply` | Apply a `.dat.csv` translated string list back to the compiled `.dat` in-place. `--apply`, `--disam`, and `--disam-apply` are mutually exclusive. |
+| `--angou <path\|angou=text\|key=bytes>` | Key source for `--disam` / `--disam-apply` on encrypted compiled `.dat` files. Uses the common key-source rules described in [`-a` / `--analyze`](#-a----analyze--analyze-and-compare-files). Not valid for `.ss` text-map export/apply. |
 
 #### Workflow: `.ss` Files
 
@@ -1044,7 +1068,7 @@ Provides tools for decoding, extracting, analyzing, and re-encoding audio files 
 
 ```
 # Extract / decode audio files
-siglus-ssu -s --x <input_dir | input_file> <output_dir> [--trim <path_to_Gameexe.dat | Gameexe.ini>]
+siglus-ssu -s --x <input_dir | input_file> <output_dir> [--trim <path_to_Gameexe.dat | Gameexe.ini>] [--angou <path|angou=text|key=bytes>]
 
 # Analyze an audio file, or compare two .ovk archives
 siglus-ssu -s --a <input_file.(nwa | ovk | owp)> [input_file_2.ovk]
@@ -1053,7 +1077,7 @@ siglus-ssu -s --a <input_file.(nwa | ovk | owp)> [input_file_2.ovk]
 siglus-ssu -s --c <input_ogg | input_dir> <output_dir>
 
 # Play one looped BGM or directory playlist using Gameexe loop points
-siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe.dat | Gameexe.ini]
+siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe.dat | Gameexe.ini] [--angou <path|angou=text|key=bytes>]
 ```
 
 #### Parameters
@@ -1065,6 +1089,7 @@ siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe
 | `--c` | **Create** mode. Encodes `.ogg` files → `.owp`, or groups of numbered `.ogg` files → `.ovk` archives. Directory input recursively scans for `.ogg` files and preserves the relative directory structure in the output. |
 | `--play` | **Play** mode. Plays one `.nwa` / `.owp` / `.ogg` BGM or an interactive directory playlist using the `#BGM.*` loop-point table from `Gameexe.dat` or `Gameexe.ini`. The Gameexe path is optional; if omitted, the tool auto-detects a nearby `Gameexe.dat`/`Gameexe.ini`. Playback runs in a full-screen terminal UI with a live progress bar and playlist view. Requires `ffplay` to be on the system `PATH` and [psutil](https://pypi.org/project/psutil/) to be installed. |
 | `--trim <Gameexe.dat \| Gameexe.ini>` | (Extract mode only) Read the `#BGM.*` loop-point table from `Gameexe.dat` or `Gameexe.ini` and trim `.owp` and `.nwa` BGM files to their loop regions. `.owp` trimming uses **ffmpeg** and writes `.ogg`; `.nwa` trimming slices decoded PCM directly and writes `.wav`. `.ovk` files are not trimmed. |
+| `--angou <path\|angou=text\|key=bytes>` | Key source for encrypted `Gameexe.dat` when a Gameexe source is read, such as `--x --trim` or `--play`. Uses the common key-source rules described in [`-a` / `--analyze`](#-a----analyze--analyze-and-compare-files). Accepted but ignored by sound operations that do not read a Gameexe source. |
 
 #### Examples
 
@@ -1077,6 +1102,9 @@ siglus-ssu -s --x /path/to/z0001.ovk /path/to/ogg_out/
 
 # Decode .owp BGM files and trim to loop region using Gameexe.dat
 siglus-ssu -s --x /path/to/bgm/ /path/to/ogg_out/ --trim /path/to/Gameexe.dat
+
+# Decode and trim with an explicit Gameexe.dat key source
+siglus-ssu -s --x /path/to/bgm/ /path/to/ogg_out/ --trim /path/to/Gameexe.dat --angou /path/to/game_dir/
 
 # Decode .nwa BGM files and trim to loop region using Gameexe.dat
 siglus-ssu -s --x /path/to/nwa_bgm/ /path/to/wav_out/ --trim /path/to/Gameexe.dat
@@ -1216,7 +1244,7 @@ siglus-ssu -p --loc (0 | 1) <input_exe> [-o output_exe] [--inplace]
 | Parameter | Description |
 |---|---|
 | `<input_exe>` | Path to `SiglusEngine.exe` to patch. |
-| `<input_key>` | **(`--altkey` only)** The new 16-byte key. Accepts a literal like `0xA9, 0x86, ...`; `key.txt`; `暗号.dat`; `SiglusEngine*.exe`; or a directory. |
+| `<input_key>` | **(`--altkey` only)** Source for the new 16-byte key. Accepts a file path to `key.txt`, `暗号.dat`, `SiglusEngine*.exe`, or `Scene.pck`; a `key=bytes` literal; or an `angou=text` literal. Directories are not accepted. This positional form is only valid with `--altkey`. |
 | `-o`, `--output` | Output executable path. Defaults to `<stem>_alt.exe`, `<stem>_CJK.exe`, `<stem>_CJKPATH.exe`, `<stem>_LOC0.exe`, or `<stem>_LOC1.exe`. |
 | `--inplace` | Overwrite the input executable directly. |
 | `--lang cjk` | Patch font charset, locale, and `system.get_language` for CJK display while keeping `Gameexe.dat`, `Scene.pck`, and `savedata` paths unchanged. |

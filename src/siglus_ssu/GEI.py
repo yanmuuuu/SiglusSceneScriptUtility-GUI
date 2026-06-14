@@ -97,6 +97,14 @@ def read_gameexe_dat(gameexe_dat_path: str, exe_el: bytes = b"", base: bytes = N
             txt = raw.decode("utf-16le", "strict")
         except Exception:
             txt = raw.decode("utf-16le", "ignore")
+    ini_ok = False
+    if txt:
+        try:
+            a = IniFileAnalizer()
+            ok, _ = a.analize(txt)
+            ini_ok = bool(ok)
+        except Exception:
+            ini_ok = False
     info = {
         "header0": int(hdr0),
         "mode": int(mode),
@@ -105,6 +113,7 @@ def read_gameexe_dat(gameexe_dat_path: str, exe_el: bytes = b"", base: bytes = N
         "lzss_header": (int(lz_hdr[0]), int(lz_hdr[1])),
         "lzss_size": int(len(lz)),
         "raw_size": int(len(raw)),
+        "ini_ok": bool(ini_ok),
     }
     if int(mode) != 0 and (not used_exe_el):
         info["warning"] = "missing exe_el"
@@ -123,7 +132,7 @@ def restore_gameexe_ini(
         raise RuntimeError(
             "Gameexe.dat is encrypted with exe angou; missing \u6697\u53f7.dat/key.txt to derive key"
         )
-    if not txt:
+    if (not txt) or (not info.get("ini_ok")):
         raise RuntimeError("Failed to decode Gameexe.dat payload")
     out_dir = os.path.abspath(output_dir or ".")
     out_path = os.path.join(out_dir, output_name)

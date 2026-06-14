@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v0.3.6] - 2026-06-14
+- Security updates.
+- Added --angou for more modes.
+
+
 ## [v0.3.5] - 2026-06-01
 - Happy birthday, Koyomi!
 - Fixed `siglus-ssu -k` `koe_master.csv` speaker inference so rows only use same-line trace metadata, anonymous voiced text no longer inherits nearby or same-`koe_no` speakers, callsites whose OVK entry is missing keep their known `koe_no`, and all CSV rows remain sorted by `koe_no`.

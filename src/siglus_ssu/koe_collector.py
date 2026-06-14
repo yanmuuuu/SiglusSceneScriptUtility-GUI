@@ -6,7 +6,13 @@ from ._const_manager import get_const_module
 from . import dat
 from . import pck
 from . import sound
-from .common import eprint, read_bytes, write_bytes
+from .common import (
+    eprint,
+    read_bytes,
+    write_bytes,
+    consume_angou_option,
+    iter_exe_el_sources,
+)
 
 C = get_const_module()
 _VOICE_CALL_NAMES = frozenset(
@@ -125,7 +131,7 @@ def _bundle_relpath(bundle, scene_root: str):
     return "<unknown>"
 
 
-def _iter_scene_bundles(scene_root: str):
+def _iter_scene_bundles(scene_root: str, explicit_angou: str = ""):
     if os.path.isfile(scene_root) and os.path.basename(scene_root).lower().endswith(
         ".pck"
     ):
@@ -140,6 +146,8 @@ def _iter_scene_bundles(scene_root: str):
             blob,
             input_pck=scene_root,
             hdr=hdr,
+            explicit_angou=explicit_angou,
+            trace_key=True,
         ):
             if not isinstance(item, dict):
                 continue
@@ -170,6 +178,14 @@ def _iter_scene_bundles(scene_root: str):
             blob = read_bytes(dat_path)
         except Exception:
             continue
+        cands = list(
+            pck.iter_exe_el_candidates(
+                os.path.dirname(os.path.abspath(dat_path)) or ".",
+                explicit_angou=explicit_angou,
+                with_sources=True,
+            )
+        )
+        blob, _used = dat.decode_scn_dat_with_candidates(blob, cands, trace=True)
         try:
             bundle = dat.dat_disassembly_bundle(
                 blob, dat_path, emit_text=False, trace_profile="koe"
@@ -401,10 +417,13 @@ def _scan_bundle_calls(bundle, scene_root: str):
     return refs
 
 
-def _scan_calls(scene_root: str):
+def _scan_calls(scene_root: str, explicit_angou: str = ""):
     refs = []
     scene_files = 0
-    for bundle in _iter_scene_bundles(scene_root):
+    for bundle in _iter_scene_bundles(
+        scene_root,
+        explicit_angou=explicit_angou,
+    ):
         _progress(
             f"koe: scanning scene {scene_files + 1}: {_bundle_relpath(bundle, scene_root)}"
         )
@@ -520,7 +539,11 @@ def _collect_entry_durations(entries, scene_map, voice_dir, ovk_entry_map, read_
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    args = list(argv)
+    try:
+        args, explicit_angou = consume_angou_option(argv)
+    except ValueError as e:
+        eprint(str(e))
+        return 2
     usage_normal = (
         "Usage: koe_collector [--stats-only] <scene_input> <voice_dir> <output_dir>"
     )
@@ -566,8 +589,17 @@ def main(argv=None):
         if len(pos) != 2:
             eprint(usage_single)
             return 2
+        if explicit_angou:
+            eprint("error: --angou is only valid when scanning scene input")
+            return 2
         scene_root = ""
         voice_dir, out_dir = pos
+    if explicit_angou:
+        try:
+            list(iter_exe_el_sources(explicit_angou=explicit_angou))
+        except ValueError as e:
+            eprint(str(e))
+            return 2
     os.makedirs(out_dir, exist_ok=True)
     (
         scene_map,
@@ -579,7 +611,10 @@ def main(argv=None):
         table_failed,
     ) = _index_ovk(voice_dir)
     if single_koe_no is None:
-        call_refs, scene_files = _scan_calls(scene_root)
+        call_refs, scene_files = _scan_calls(
+            scene_root,
+            explicit_angou=explicit_angou,
+        )
         if scene_files <= 0:
             eprint("No scene .dat files or supported .pck scenes found.")
             return 1

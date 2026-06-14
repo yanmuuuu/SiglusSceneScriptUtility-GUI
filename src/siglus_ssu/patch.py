@@ -8,18 +8,15 @@ from bisect import bisect_right
 from .common import (
     read_bytes,
     write_bytes,
-    read_exe_el_key,
-    read_angou_first_line,
-    angou_to_exe_el,
-    find_exe_el,
-    is_named_filename,
-    ANGOU_DAT_NAME,
-    KEY_TXT_NAME,
-    read_siglus_engine_exe_el,
     siglus_engine_exe_element,
     parse_pe32_layout,
     pe32_file_off_to_va,
     pe32_rva_to_off,
+    iter_exe_el_sources,
+    format_exe_el_source,
+    ANGOU_DAT_NAME,
+    parse_exe_el_key_text,
+    angou_to_exe_el,
 )
 
 _LOC_FUNC_PROLOG = b"\x55\x8b\xec"
@@ -35,47 +32,30 @@ _LOC_IMPORT_ALIASES = {
 }
 
 
-def _parse_key_literal(s: str) -> bytes:
-    s = str(s or "").strip()
-    if not s:
-        return b""
-    parts = re.findall(r"0x([0-9a-fA-F]{1,2})", s)
-    if len(parts) != 16:
+def _derive_key_from_file(p: str) -> bytes:
+    p = os.path.abspath(str(p or ""))
+    if not p or not os.path.isfile(p):
         return b""
     try:
-        b = bytes(int(x, 16) & 0xFF for x in parts)
-    except Exception:
+        for src in iter_exe_el_sources(explicit_angou=p):
+            el = src.get("exe_el") if isinstance(src, dict) else b""
+            if el and len(el) == 16:
+                return bytes(el)
+    except ValueError:
         return b""
-    return b if len(b) == 16 else b""
-
-
-def _derive_key_from_path(p: str) -> bytes:
-    p = os.path.abspath(str(p or ""))
-    if not p or not os.path.exists(p):
-        return b""
-    if os.path.isdir(p):
-        el = find_exe_el(p, recursive=False)
-        return el if el and len(el) == 16 else b""
-    bn = os.path.basename(p)
-    cf = bn.casefold()
-    if is_named_filename(bn, KEY_TXT_NAME):
-        el = read_exe_el_key(p)
-        return el if el and len(el) == 16 else b""
-    if is_named_filename(bn, ANGOU_DAT_NAME):
-        el = angou_to_exe_el(read_angou_first_line(p))
-        return el if el and len(el) == 16 else b""
-    if cf.startswith("siglusengine") and cf.endswith(".exe"):
-        el = read_siglus_engine_exe_el(p)
-        return el if el and len(el) == 16 else b""
-    el = read_exe_el_key(p)
-    return el if el and len(el) == 16 else b""
+    return b""
 
 
 def parse_input_key(arg: str) -> bytes:
-    el = _parse_key_literal(arg)
-    if el and len(el) == 16:
-        return el
-    el = _derive_key_from_path(arg)
+    s = str(arg or "").strip()
+    low = s.casefold()
+    if low.startswith("key="):
+        el = parse_exe_el_key_text(s.split("=", 1)[1])
+        return el if el and len(el) == 16 else b""
+    if low.startswith("angou="):
+        el = angou_to_exe_el(s.split("=", 1)[1])
+        return el if el and len(el) == 16 else b""
+    el = _derive_key_from_file(arg)
     if el and len(el) == 16:
         return el
     return b""
@@ -993,7 +973,7 @@ def main(argv=None):
         argv = sys.argv[1:]
     ap = argparse.ArgumentParser(description="Patch SiglusEngine.exe.")
     ap.add_argument("input", help="input exe path")
-    ap.add_argument("key", nargs="?", help="key literal/path (for --altkey)")
+    ap.add_argument("key", nargs="?", help="key file, key=bytes, or angou=text")
     ap.add_argument("-o", "--output", help="output exe path")
     ap.add_argument("--inplace", action="store_true", help="overwrite input file")
     g = ap.add_mutually_exclusive_group(required=True)
@@ -1007,6 +987,9 @@ def main(argv=None):
         sys.stderr.write(f"not found: {in_path}\n")
         return 2
     raw = read_bytes(in_path)
+    if (not args.altkey) and args.key:
+        sys.stderr.write("<key> is only valid with --altkey\n")
+        return 2
     if args.info:
         if args.output or args.inplace:
             sys.stderr.write(
@@ -1027,16 +1010,32 @@ def main(argv=None):
     loc_after = None
     warnings = []
     if args.altkey:
-        if not args.key:
-            sys.stderr.write("missing <key> for --altkey\n")
+        key_source = {}
+        if args.key:
+            key_bytes = parse_input_key(args.key)
+            key_source = {
+                "exe_el": key_bytes,
+                "kind": "input_key_file",
+                "label": "positional",
+                "path": args.key if os.path.isfile(str(args.key or "")) else "",
+            }
+            arg_text = str(args.key or "").strip()
+            if arg_text.casefold().startswith("key="):
+                key_source["kind"] = "key_literal"
+            elif arg_text.casefold().startswith("angou="):
+                key_source["kind"] = "angou_literal"
+                key_source["angou"] = arg_text.split("=", 1)[1]
+        else:
+            sys.stderr.write("missing <key_file> for --altkey\n")
             return 2
-        key_bytes = parse_input_key(args.key)
         if len(key_bytes) != 16:
             sys.stderr.write(
-                "invalid <key>: expected either a 16-byte literal like '0xA9, 0x86, ...'\n"
-                "or a path to \u6697\u53f7.dat / key.txt / SiglusEngine*.exe / directory (auto-derive).\n"
+                "invalid <key>: expected a file path to key.txt, "
+                f"{ANGOU_DAT_NAME}, SiglusEngine*.exe, or Scene.pck; "
+                "key=bytes; or angou=text.\n"
             )
             return 2
+        sys.stderr.write(f"key source selected: {format_exe_el_source(key_source)}\n")
         try:
             changes = patch_altkey(data, key_bytes)
         except Exception as e:

@@ -336,13 +336,13 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 
 ```bash
 # 提取 .pck 文件
-siglus-ssu -x [--disam] <input_pck> [output_dir]
+siglus-ssu -x [--disam] <input_pck> [output_dir] [--angou <path|angou=text|key=bytes>]
 
 # 对目录中的 `.dat` 批量反汇编并反编译
-siglus-ssu -x --disam <input_dir> [output_dir]
+siglus-ssu -x --disam <input_dir> [output_dir] [--angou <path|angou=text|key=bytes>]
 
 # 从 Gameexe.dat 还原 Gameexe.ini
-siglus-ssu -x --gei <Gameexe.dat | input_dir> [output_dir]
+siglus-ssu -x --gei <Gameexe.dat | input_dir> [output_dir] [--angou <path|angou=text|key=bytes>]
 ```
 
 #### 参数
@@ -353,7 +353,8 @@ siglus-ssu -x --gei <Gameexe.dat | input_dir> [output_dir]
 | `<input_dir>` | 启用 `--disam` 时，用来扫描 `.dat` 的目录路径。只处理该目录当前层的 `.dat` 文件。 |
 | `<output_dir>` | 提取文件的输出目录。对所有 `-x` 模式都可省略；省略时默认输出到输入文件所在目录，若输入本身是目录，则默认输出到该目录。 |
 | `--disam` | 对 `.pck` 输入时，除写出 `<scene>.dat.txt` 反汇编外，还会额外写出重建后的 `decompiled/<scene>.ss` 以及 `decompiled/__decompiled.inc`。对目录输入时，只扫描该目录当前层的 `.dat`，并将 `.dat.txt` 和 `decompiled/*.ss` 写入 `<output_dir>`。不能与 `--gei` 同用。非场景 `.dat` 会自动跳过。 |
-| `--gei` | 不提取 `.pck`，而是将 `Gameexe.dat` 二进制文件解码还原为 `Gameexe.ini` 明文文件。输入参数可以是 `.dat` 文件本身或其父目录。会尝试自动检测附近的 `暗号.dat`、`key.txt`、`SiglusEngine*.exe`，或 `Scene.pck` 内嵌的 `暗号.dat` 数据，以推导候选解密密钥。 |
+| `--angou <path\|angou=text\|key=bytes>` | 覆盖或补充场景/Gameexe 解密 key 来源。使用 [`-a` / `--analyze`](#-a----analyze--分析和比较文件) 中说明的公共 key-source 规则。 |
+| `--gei` | 不提取 `.pck`，而是将 `Gameexe.dat` 二进制文件解码还原为 `Gameexe.ini` 明文文件。输入参数可以是 `.dat` 文件本身或其父目录。key 候选会按公共 key-source 规则尝试。 |
 
 对 `.pck` 输入时，实际输出会写入 `output_YYYYMMDD_HHMMSS/` 目录。若包内存在原始 source，会与解码后的场景 `.dat` 一起还原出来。启用 `--disam` 时，命令结束前还会打印反汇编、hints 和反编译三个阶段的总耗时。
 
@@ -370,6 +371,9 @@ siglus-ssu -x /path/to/Scene.pck
 
 # 提取并附带 `.dat` 反汇编和反编译 `.ss`
 siglus-ssu -x --disam /path/to/Scene.pck /path/to/translation_work/
+
+# 使用显式 key 来源提取加密场景
+siglus-ssu -x /path/to/Scene.pck /path/to/translation_work/ --angou /path/to/game_dir/
 
 # 对单个目录当前层的 `.dat` 批量反汇编并反编译
 siglus-ssu -x --disam /path/to/scene_dir/
@@ -391,20 +395,27 @@ siglus-ssu -x --gei /path/to/Gameexe.dat /path/to/output/
 #### 语法
 
 ```
-# 分析单个文件
-siglus-ssu -a [--disam] [--readall|--apply] <input_file>
+# 分析 .pck 或 .dat 文件
+siglus-ssu -a [--disam] <input_file.(pck|dat)> [--angou <path|angou=text|key=bytes>]
+
+# 分析或修改其他支持文件
+siglus-ssu -a [--readall|--apply] <input_file.sav>
+siglus-ssu -a <input_file.(gan|sav|cgm|tcr)>
 
 # 仅统计 .pck 中的台词计数并导出逐文件 CSV
-siglus-ssu -a --word <input_pck> [output_csv]
+siglus-ssu -a --word <input_pck> [output_csv] [--angou <path|angou=text|key=bytes>]
 
-# 比较两个文件；同类型执行结构比较，异类型则分别分析
+# 比较两个 .pck 或 .dat 文件
+siglus-ssu -a [--payload] [--disam] <input_file_1.(pck|dat)> <input_file_2.(pck|dat)> [--angou <path|angou=text|key=bytes>]
+
+# 不显式指定 key 来源时比较两个文件
 siglus-ssu -a [--payload] [--disam] <input_file_1> <input_file_2>
 
-# 从 暗号.dat / Scene.pck / SiglusEngine.exe / 目录 / 字符串 分析或推导 exe_el 密钥
-siglus-ssu -a <path_to_暗号.dat | Scene.pck | SiglusEngine.exe | dir | literal_angou> --angou
+# 从 key 来源分析或推导 exe_el 密钥
+siglus-ssu -a --angou <path|angou=text|key=bytes>
 
 # 分析或比较 Gameexe.dat
-siglus-ssu -a --gei <Gameexe.dat> [Gameexe.dat_2]
+siglus-ssu -a --gei <Gameexe.dat> [Gameexe.dat_2] [--angou <path|angou=text|key=bytes>]
 ```
 
 #### 参数
@@ -416,10 +427,12 @@ siglus-ssu -a --gei <Gameexe.dat> [Gameexe.dat_2]
 | `--disam` | 分析 `.dat` 文件或比较两个 `.dat` 文件时，将可读反汇编写在各自输入 `.dat` 同目录下的 `<scene>.dat.txt`，并额外输出重建后的 `decompiled/<scene>.ss` 与 `decompiled/__decompiled.inc`。命令结束前会打印反汇编、hints 和反编译三个阶段的总耗时。decompiler 输出目前仍属实验性质，不应视为可靠真值。 |
 | `--readall` | 只对 `read.sav` 和 `global.sav` 有意义。对 `read.sav`：将所有已读标志位设为 `1`（标记所有场景为已读）。对 `global.sav`：就地解锁引擎管理的收集字段，目前包括存在时的 `cg_table`、`bgm_table` 和 `chrkoe.look_flag`。写入前会自动创建不覆盖旧文件的 `.bak` 备份。不能与 `--apply`、比较模式、`--word`、`--angou` 或 `--gei` 同用；`--disam` 与 `--payload` 不会改变这个单文件 `.sav` 操作。不会修改无关的通用全局标志数组，也不会修改 Steam 这类外部成就后端。 |
 | `--apply` | 仅用于 `global.sav`：读取同目录、同主文件名的 `global.txt`，应用其中可编辑的 `G[n]`、`Z[n]`、`cg_table[n]`、`bgm_table[n]` 和 `chrkoe[n].look_flag` 条目，自动创建不覆盖旧文件的 `.bak` 备份，并就地重写 `.sav`。其他生成字段，如 `M`、`global_namae` 和角色显示名，会被忽略。不能与 `--readall`、比较模式、`--disam`、`--payload`、`--word`、`--angou` 或 `--gei` 同用。 |
-| `--word` | 仅用于 `.pck`：跳过常规结构分析，统计每个已解码场景 `.dat` 和每个内嵌 `.ss` source 的台词计数，逐文件打印，并写入 CSV。若省略 `[output_csv]`，则默认写到输入 `.pck` 同目录下的 `<input_pck_stem>.word.csv`；若 `[output_csv]` 是已存在目录或以路径分隔符结尾，则把这个默认 CSV 文件名写入该目录。 |
+| `--word` | 仅用于 `.pck`：跳过常规结构分析，统计每个已解码场景 `.dat` 和每个内嵌 `.ss` source 的台词计数，逐文件打印，并写入 CSV。若省略 `[output_csv]`，则默认写到输入 `.pck` 同目录下的 `<input_pck_stem>.word.csv`；若 `[output_csv]` 是已存在目录或以路径分隔符结尾，则把这个默认 CSV 文件名写入该目录。可以与 `--angou` 同用。 |
 | `--payload` | **（仅比较模式）** 对 `.pck` 和 `.dat` 的比较额外执行“规范化后的解码/解压 `scn_bytes` 语义”比较。当解析出的文本相同而仅有字符串池 `str_id` 不同时，会视为相同。`.pck` 结果会区分 `same`、仅解析文本变化的 `text_only`、非文本场景字节码差异的 `real_diff`，以及 payload 比较不可用时的 `-`；`.dat` 结果使用 `identical`、`text_only`、`real_diff` 或 `unavailable`。它比普通结构比较更耗时，但能更好地区分纯翻译文本变化与真实场景行为变化。 |
-| `--angou` | 将输入解析为 `暗号.dat`，或从 `.pck` 的内嵌 original source 中提取 `暗号.dat`，或读取 `SiglusEngine*.exe` / 包含其中之一的目录，也可以直接使用输入的暗号字符串，然后推导并打印 `exe_el` 密钥（`key.txt` 格式的 16 字节密钥）。若参数是已存在路径，会优先按文件或目录处理；不存在但形似路径的参数仍会报 `not found`。 |
-| `--gei` | 分析或比较 `Gameexe.dat` 文件，而非通用二进制文件。该模式会拒绝其他 analyze 修饰选项，例如 `--disam`、`--readall`、`--apply`、`--payload`、`--word` 和 `--angou`。 |
+| `--angou <path\|angou=text\|key=bytes>` | `.pck`/`.dat` 分析、`.pck` 台词统计、`Gameexe.dat` 分析或单独推导 key 时使用的显式 key 来源。`--angou` 必须是命令中的最后一个选项，必须使用 `--angou VALUE` 的分离写法，且值不能为空。裸值一律视为文件或目录路径；暗号字面量请写成 `angou=text`，16 字节 `exe_el` key 字面量请写成 `key=bytes`，例如 `key=0xA9,0x86,...`。解密时会按顺序尝试候选：显式 `--angou`；输入 `.pck` 内嵌 `暗号.dat`；当前目录；父目录。只有高优先级来源已经解析出 key、但该 key 未通过解密校验时，才会回落到低优先级候选；缺失、格式错误或无法产出 key 的显式来源会作为输入错误报告。若 `--angou` 使用裸路径，则本次请求禁用父目录探测，回落到当前目录后停止。目录探测不递归。每个被探测目录内部顺序为 `Scene.pck`、`Scene*.pck`、`暗号.dat`、`key.txt`、`SiglusEngine*.exe`。 |
+| `--gei` | 分析或比较 `Gameexe.dat` 文件，而非通用二进制文件。该模式可以使用 `--angou`，但会拒绝其他 analyze 修饰选项，例如 `--disam`、`--readall`、`--apply`、`--payload` 和 `--word`。 |
+
+尝试解密候选时会向 stderr 打印 key-source 诊断信息：每行包含来源、类型、适用时的路径或包内文件、具体 `exe_el` 值，以及该候选是 accepted 还是 rejected 并继续 fallback。
 
 #### 示例
 
@@ -435,6 +448,9 @@ siglus-ssu -a --word /path/to/Scene.pck /path/to/scene_counts.csv
 
 # 分析编译后的 .dat 脚本 — 打印头部字段和字符串池
 siglus-ssu -a /path/to/script.dat
+
+# 使用目录 key 来源分析加密 .dat 脚本
+siglus-ssu -a /path/to/script.dat --angou /path/to/game_dir/
 
 # 比较两个版本的 Scene.pck — 报告文件增删和变化
 siglus-ssu -a /path/to/Scene_original.pck /path/to/Scene_translated.pck
@@ -456,16 +472,19 @@ siglus-ssu -a /path/to/savedata/global.sav
 siglus-ssu -a --apply /path/to/savedata/global.sav
 
 # 从 暗号.dat 推导 exe_el 密钥
-siglus-ssu -a /path/to/暗号.dat --angou
+siglus-ssu -a --angou /path/to/暗号.dat
 
 # 直接从暗号字符串推导 exe_el 密钥
-siglus-ssu -a --angou "literal_angou_string"
+siglus-ssu -a --angou "angou=literal_angou_string"
 
 # 直接从 SiglusEngine 可执行文件推导 exe_el 密钥
-siglus-ssu -a /path/to/SiglusEngine.exe --angou
+siglus-ssu -a --angou /path/to/SiglusEngine.exe
 
-# 从游戏目录推导 exe_el 密钥（自动检测 暗号.dat 或 exe）
-siglus-ssu -a /path/to/game_dir/ --angou
+# 从 16 字节 key 字面量推导 exe_el 密钥
+siglus-ssu -a --angou "key=0xA9,0x86,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00"
+
+# 从游戏目录推导 exe_el 密钥
+siglus-ssu -a --angou /path/to/game_dir/
 ```
 
 #### 输出格式（`.pck` 示例）
@@ -606,7 +625,7 @@ siglus-ssu -d --c --test-shuffle /path/to/original.dbs /path/to/input.csv /path/
 #### 语法
 
 ```
-siglus-ssu -k [--stats-only] <scene_input> <voice_dir> <output_dir>
+siglus-ssu -k [--stats-only] <scene_input> <voice_dir> <output_dir> [--angou <path|angou=text|key=bytes>]
 siglus-ssu -k [--stats-only] --single KOE_NO <voice_dir> <output_dir>
 ```
 
@@ -617,6 +636,7 @@ siglus-ssu -k [--stats-only] --single KOE_NO <voice_dir> <output_dir>
 | `<scene_input>` | `Scene.pck`、单个场景 `.dat` 文件，或场景 `.dat` 目录树的路径。普通模式必填；使用 `--single` 时不需要。 |
 | `<voice_dir>` | 包含 `.ovk` 语音文件的扁平顶层目录（通常命名为 `z0001.ovk`、`z0002.ovk` 等）。也可以是单个 `.ovk` 文件的路径。目录模式当前只扫描该目录当前层的 `.ovk` 文件，不递归，也不会进入角色子目录。 |
 | `<output_dir>` | 提取的 `.ogg` 文件输出目录。普通模式下还会在这里写出 `koe_master.csv`；使用 `--single` 时，提取出的单个文件会直接写到 `<output_dir>` 根下。 |
+| `--angou <path\|angou=text\|key=bytes>` | 扫描加密 `Scene.pck` 或场景 `.dat` 输入时使用的 key 来源。使用 [`-a` / `--analyze`](#-a----analyze--分析和比较文件) 中说明的公共 key-source 规则。不能与 `--single` 同用。 |
 | `--stats-only` | 打印汇总，但不会写任何 `.ogg` 文件。普通模式下仍会写出 `koe_master.csv`；若同时使用 `--single`，则不会写 CSV。 |
 | `--single KOE_NO` | 仅提取指定的全局 KOE 编号。此模式下不需要场景输入，不会生成 `koe_master.csv`，不会创建角色名或 `unreferenced` 子目录，输出文件会直接写成 `<output_dir>/KOE(XXXXXXXXX).ogg`。 |
 
@@ -646,6 +666,9 @@ siglus-ssu -k [--stats-only] --single KOE_NO <voice_dir> <output_dir>
 ```bash
 # 直接从 Scene.pck 收集所有语音文件
 siglus-ssu -k /path/to/Scene.pck /path/to/voice/ /path/to/voice_out/
+
+# 使用显式 key 来源扫描加密场景数据
+siglus-ssu -k /path/to/Scene.pck /path/to/voice/ /path/to/voice_out/ --angou /path/to/game_dir/
 
 # 从解码后的场景 `.dat` 目录收集
 siglus-ssu -k /path/to/scene_dir/ /path/to/voice/ /path/to/voice_out/
@@ -762,10 +785,10 @@ siglus-ssu -m <path_to_ss | path_to_dir>
 siglus-ssu -m --apply <path_to_ss | path_to_dir>
 
 # 从已编译的 .dat 文件导出字符串列表
-siglus-ssu -m --disam <path_to_dat | path_to_dir>
+siglus-ssu -m --disam <path_to_dat | path_to_dir> [--angou <path|angou=text|key=bytes>]
 
 # 将已翻译的字符串列表应用回已编译的 .dat 文件
-siglus-ssu -m --disam-apply <path_to_dat | path_to_dir>
+siglus-ssu -m --disam-apply <path_to_dat | path_to_dir> [--angou <path|angou=text|key=bytes>]
 ```
 
 #### 参数
@@ -777,6 +800,7 @@ siglus-ssu -m --disam-apply <path_to_dat | path_to_dir>
 | `--apply`, `-a` | 将 `.ss.csv` 文本映射就地应用回对应的 `.ss` 文件。`.ss.csv` 必须已与 `.ss` 文件并排存在。 |
 | `--disam` | 将已编译的 `.dat` 的字符串列表导出到紧邻 `.dat` 的 `.dat.csv` 文件。支持加密、LZSS 压缩或原始 `.dat`。扫描目录时会递归处理 `.dat`，并自动跳过 `Gameexe.dat` 和 `暗号.dat`。 |
 | `--disam-apply` | 将 `.dat.csv` 转换后的字符串列表就地应用回已编译的 `.dat`。`--apply`、`--disam`、`--disam-apply` 互斥。 |
+| `--angou <path\|angou=text\|key=bytes>` | 对加密的已编译 `.dat` 执行 `--disam` / `--disam-apply` 时使用的 key 来源。使用 [`-a` / `--analyze`](#-a----analyze--分析和比较文件) 中说明的公共 key-source 规则。不能用于 `.ss` 文本映射导出/应用。 |
 
 #### `.ss` 文件工作流程
 
@@ -1044,7 +1068,7 @@ siglus-ssu -g --c --type 2 /path/to/work/char_face.type2.json /path/to/rebuilt/c
 
 ```
 # 提取/解码音频文件
-siglus-ssu -s --x <input_dir | input_file> <output_dir> [--trim <path_to_Gameexe.dat | Gameexe.ini>]
+siglus-ssu -s --x <input_dir | input_file> <output_dir> [--trim <path_to_Gameexe.dat | Gameexe.ini>] [--angou <path|angou=text|key=bytes>]
 
 # 分析音频文件，或比较两个 .ovk 文件
 siglus-ssu -s --a <input_file.(nwa | ovk | owp)> [input_file_2.ovk]
@@ -1053,7 +1077,7 @@ siglus-ssu -s --a <input_file.(nwa | ovk | owp)> [input_file_2.ovk]
 siglus-ssu -s --c <input_ogg | input_dir> <output_dir>
 
 # 使用 Gameexe 循环点播放单个循环 BGM 或目录播放列表
-siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe.dat | Gameexe.ini]
+siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe.dat | Gameexe.ini] [--angou <path|angou=text|key=bytes>]
 ```
 
 #### 参数
@@ -1065,6 +1089,7 @@ siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe
 | `--c` | **创建**模式。将 `.ogg` 文件编码为 `.owp`，或将编号的 `.ogg` 文件组合编码为 `.ovk` 文件。目录输入时会递归扫描 `.ogg`，并在输出端保留相对目录结构。 |
 | `--play` | **播放**模式。读取 `Gameexe.dat` 或 `Gameexe.ini` 中的 `#BGM.*` 循环点表，播放单个 `.nwa` / `.owp` / `.ogg` BGM，或播放一个可交互的目录播放列表。Gameexe 路径为可选；省略时会自动探测附近的 `Gameexe.dat`/`Gameexe.ini`。播放界面为整屏终端 UI，带实时进度条和播放列表视图。需要 `ffplay` 在系统 `PATH` 中，且已安装 [psutil](https://pypi.org/project/psutil/)。 |
 | `--trim <Gameexe.dat \| Gameexe.ini>` | （仅提取模式）从 `Gameexe.dat` 或 `Gameexe.ini` 读取 `#BGM.*` 循环点表，并将 `.owp` 与 `.nwa` BGM 裁剪到其循环区域。`.owp` 裁剪会使用 **ffmpeg** 并输出 `.ogg`；`.nwa` 裁剪会直接截取解码后的 PCM 并输出 `.wav`。`.ovk` 文件不参与裁剪。 |
+| `--angou <path\|angou=text\|key=bytes>` | 读取 Gameexe 来源时使用的加密 `Gameexe.dat` key 来源，例如 `--x --trim` 或 `--play`。使用 [`-a` / `--analyze`](#-a----analyze--分析和比较文件) 中说明的公共 key-source 规则。不读取 Gameexe 来源的 sound 操作也接受该参数，但会忽略它。 |
 
 #### 示例
 
@@ -1077,6 +1102,9 @@ siglus-ssu -s --x /path/to/z0001.ovk /path/to/ogg_out/
 
 # 解码 .owp BGM 并按 Gameexe.dat 循环点裁剪
 siglus-ssu -s --x /path/to/bgm/ /path/to/ogg_out/ --trim /path/to/Gameexe.dat
+
+# 使用显式 Gameexe.dat key 来源解码并裁剪
+siglus-ssu -s --x /path/to/bgm/ /path/to/ogg_out/ --trim /path/to/Gameexe.dat --angou /path/to/game_dir/
 
 # 解码 .nwa BGM 并按 Gameexe.dat 循环点裁剪
 siglus-ssu -s --x /path/to/nwa_bgm/ /path/to/wav_out/ --trim /path/to/Gameexe.dat
@@ -1216,7 +1244,7 @@ siglus-ssu -p --loc (0 | 1) <input_exe> [-o output_exe] [--inplace]
 | 参数 | 说明 |
 |---|---|
 | `<input_exe>` | 要修改的 `SiglusEngine.exe` 路径。 |
-| `<input_key>` | **仅 `--altkey` 使用**。新的 16 字节 key，可传入 `0xA9, 0x86, ...` 形式的字面量、`key.txt`、`暗号.dat`、`SiglusEngine*.exe` 或目录。 |
+| `<input_key>` | **仅 `--altkey` 使用**。新的 16 字节 key 来源，可指向 `key.txt`、`暗号.dat`、`SiglusEngine*.exe` 或 `Scene.pck` 文件路径，也可写成 `key=bytes` 字面量或 `angou=text` 字面量。不接受目录。这个位置参数只在 `--altkey` 模式有效。 |
 | `-o`, `--output` | 输出 exe 路径。默认输出名为 `<stem>_alt.exe`、`<stem>_CJK.exe`、`<stem>_CJKPATH.exe`、`<stem>_LOC0.exe` 或 `<stem>_LOC1.exe`。 |
 | `--inplace` | 直接覆盖输入 exe。 |
 | `--lang cjk` | 修改字体 charset、locale 与 `system.get_language`，用于 CJK 显示；不修改 `Gameexe.dat`、`Scene.pck`、`savedata` 路径。 |

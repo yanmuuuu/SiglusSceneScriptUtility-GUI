@@ -20,10 +20,12 @@ from .common import (
     is_named_filename,
     is_trace_command_base as _is_trace_command_base,
     ANGOU_DAT_NAME,
+    consume_angou_option,
     read_struct_list,
     I32_PAIR_STRUCT,
     read_scn_metadata,
     write_encoded_text,
+    format_exe_el_source,
 )
 
 C = get_const_module()
@@ -1037,7 +1039,11 @@ def _encode_scn_dat(blob: bytes, enc: dict, exe_el: bytes) -> bytes:
     return b
 
 
-def _process_dat(dat_path: str, apply_mode: bool, exe_el: bytes = b"") -> int:
+def _process_dat(
+    dat_path: str,
+    apply_mode: bool,
+    exe_el_candidates=None,
+) -> int:
     fname = os.path.basename(dat_path)
     if not os.path.exists(dat_path):
         eprint(f"textmap: file not found: {dat_path}", errors="replace")
@@ -1048,7 +1054,24 @@ def _process_dat(dat_path: str, apply_mode: bool, exe_el: bytes = b"") -> int:
     except Exception:
         eprint(f"textmap: failed to read: {dat_path}", errors="replace")
         return 1
-    parsed, _plain_blob, enc = _parse_scn_dat_with_decrypt(blob, exe_el)
+    candidates = list(exe_el_candidates or [])
+    if not candidates:
+        candidates = [b""]
+    parsed = None
+    enc = None
+    used_exe_el = b""
+    for cand in candidates:
+        src = cand if isinstance(cand, dict) else {"exe_el": cand, "kind": "bytes"}
+        exe_el = src.get("exe_el") if isinstance(src, dict) else cand
+        sys.stderr.write(f"key source try: {format_exe_el_source(src)}\n")
+        parsed, _plain_blob, enc = _parse_scn_dat_with_decrypt(blob, exe_el)
+        if parsed:
+            used_exe_el = exe_el
+            sys.stderr.write(f"key source accepted: {format_exe_el_source(src)}\n")
+            break
+        sys.stderr.write(
+            f"key source rejected, falling back: {format_exe_el_source(src)}\n"
+        )
     if not parsed:
         eprint(f"textmap: {fname}: not a scene .dat", errors="replace")
         return 1
@@ -1073,7 +1096,7 @@ def _process_dat(dat_path: str, apply_mode: bool, exe_el: bytes = b"") -> int:
     except Exception:
         eprint(f"textmap: {fname}: rebuild failed", errors="replace")
         return 1
-    out_bytes = _encode_scn_dat(out_bytes_plain, enc, exe_el)
+    out_bytes = _encode_scn_dat(out_bytes_plain, enc, used_exe_el)
     try:
         with open(dat_path, "wb") as f:
             f.write(out_bytes)
@@ -1170,6 +1193,11 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help", "help"):
         _hint_help(sys.stdout)
         return 0
+    try:
+        argv, explicit_angou = consume_angou_option(argv)
+    except ValueError as e:
+        eprint(str(e), errors="replace")
+        return 2
     apply_mode = False
     disam_mode = False
     disam_apply_mode = False
@@ -1205,15 +1233,16 @@ def main(argv=None):
         eprint("textmap: expected exactly 1 path argument", errors="replace")
         _hint_help()
         return 2
+    if explicit_angou and not (disam_mode or disam_apply_mode):
+        eprint(
+            "textmap: --angou is only valid with --disam/--disam-apply",
+            errors="replace",
+        )
+        _hint_help()
+        return 2
     ss_path = args[0]
     if disam_mode or disam_apply_mode:
         dat_path = ss_path
-        base_dir = (
-            os.path.abspath(dat_path)
-            if os.path.isdir(dat_path)
-            else (os.path.dirname(os.path.abspath(dat_path)) or ".")
-        )
-        exe_el = pck.compute_exe_el(base_dir) if base_dir else b""
         if os.path.isdir(dat_path):
             dat_files = iter_files_by_ext(
                 dat_path,
@@ -1228,11 +1257,43 @@ def main(argv=None):
                 return 1
             errors = 0
             for file_path in dat_files:
-                rc = _process_dat(file_path, disam_apply_mode, exe_el)
+                base_dir = os.path.dirname(os.path.abspath(file_path)) or "."
+                try:
+                    exe_el_candidates = list(
+                        pck.iter_exe_el_candidates(
+                            base_dir,
+                            explicit_angou=explicit_angou,
+                            with_sources=True,
+                        )
+                    )
+                except ValueError as e:
+                    eprint(str(e), errors="replace")
+                    return 2
+                rc = _process_dat(
+                    file_path,
+                    disam_apply_mode,
+                    exe_el_candidates=exe_el_candidates,
+                )
                 if rc != 0:
                     errors += 1
             return 1 if errors else 0
-        return _process_dat(dat_path, disam_apply_mode, exe_el)
+        base_dir = os.path.dirname(os.path.abspath(dat_path)) or "."
+        try:
+            exe_el_candidates = list(
+                pck.iter_exe_el_candidates(
+                    base_dir,
+                    explicit_angou=explicit_angou,
+                    with_sources=True,
+                )
+            )
+        except ValueError as e:
+            eprint(str(e), errors="replace")
+            return 2
+        return _process_dat(
+            dat_path,
+            disam_apply_mode,
+            exe_el_candidates=exe_el_candidates,
+        )
     if os.path.isdir(ss_path):
         ss_files = iter_files_by_ext(ss_path, [".ss"])
         if not ss_files:

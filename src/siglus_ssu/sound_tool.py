@@ -27,6 +27,8 @@ from .common import (
     missing_input_file,
     read_text_auto,
     run_batch,
+    consume_angou_option,
+    format_exe_el_source,
 )
 from . import sound
 from . import GEI
@@ -388,27 +390,60 @@ def _parse_bgm_table(gameexe_ini_text: str):
     return table
 
 
-def _load_gameexe_ini_text(gameexe_path: str) -> str:
-    ext = os.path.splitext(gameexe_path)[1].lower()
-    if ext == ".ini":
-        return read_text_auto(gameexe_path)
+def _load_gameexe_ini_text(gameexe_path: str, explicit_angou: str = "") -> str:
+    try:
+        txt = read_text_auto(gameexe_path)
+    except Exception:
+        txt = ""
+    if txt:
+        if _parse_bgm_table(txt):
+            return txt
+        try:
+            ok, _ = GEI.IniFileAnalizer().analize(txt)
+        except Exception:
+            ok = False
+        if ok:
+            return txt
     os_dir = os.path.dirname(os.path.abspath(gameexe_path))
-    cands = list(pck.iter_exe_el_candidates(os_dir))
+    cands = None
+    if explicit_angou:
+        cands = list(
+            pck.iter_exe_el_candidates(
+                os_dir,
+                explicit_angou=explicit_angou,
+                with_sources=True,
+            )
+        )
+    if cands is None:
+        cands = list(
+            pck.iter_exe_el_candidates(
+                os_dir,
+                explicit_angou=explicit_angou,
+                with_sources=True,
+            )
+        )
     if not cands:
         cands = [b""]
     last_err = None
-    for exe_el in cands:
+    for cand in cands:
+        src = cand if isinstance(cand, dict) else {"exe_el": cand, "kind": "bytes"}
+        exe_el = src.get("exe_el") if isinstance(src, dict) else cand
+        sys.stderr.write(f"key source try: {format_exe_el_source(src)}\n")
         try:
             info, txt = GEI.read_gameexe_dat(gameexe_path, exe_el=exe_el)
             if info.get("mode") and not info.get("used_exe_el"):
                 raise RuntimeError(
                     f"Gameexe.dat is encrypted with exe angou; missing {ANGOU_DAT_NAME}/key.txt to derive key"
                 )
-            if not txt:
+            if (not txt) or (not info.get("ini_ok")):
                 raise RuntimeError("Failed to decode Gameexe.dat payload")
+            sys.stderr.write(f"key source accepted: {format_exe_el_source(src)}\n")
             return txt
         except Exception as exc:
             last_err = exc
+            sys.stderr.write(
+                f"key source rejected, falling back: {format_exe_el_source(src)}\n"
+            )
     if last_err is not None:
         raise last_err
     raise RuntimeError("Failed to decode Gameexe.dat payload")
@@ -1626,6 +1661,13 @@ def _extract_one(
 
 
 def main(argv=None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    try:
+        argv, explicit_angou = consume_angou_option(argv)
+    except ValueError as exc:
+        eprint(str(exc))
+        return 2
     mode, argv, rc = parse_main_argv(
         argv, _hint_help, flags=("--x", "--a", "--c", "--play")
     )
@@ -1729,10 +1771,20 @@ def main(argv=None) -> int:
             eprint(f"Gameexe source not found: {trim_path}")
             return 1
         ffplay_path = shutil.which("ffplay") or ""
-        gei_txt = _load_gameexe_ini_text(trim_path)
+        try:
+            gei_txt = _load_gameexe_ini_text(
+                trim_path,
+                explicit_angou=explicit_angou,
+            )
+        except ValueError as exc:
+            eprint(f"error: {exc}")
+            return 2
+        except Exception as exc:
+            eprint(f"error: {exc}")
+            return 1
         trim_table = _parse_bgm_table(gei_txt)
         if not trim_table:
-            eprint("error: no #BGM.* entries found in Gameexe source")
+            eprint("error: no #BGM.* entries found")
             return 1
         entries, rc = _collect_playback_entries(inp)
         if rc is not None:
@@ -1786,10 +1838,20 @@ def main(argv=None) -> int:
         if not os.path.isfile(trim_path):
             eprint(f"Gameexe.dat not found: {trim_path}")
             return 1
-        gei_txt = _load_gameexe_ini_text(trim_path)
+        try:
+            gei_txt = _load_gameexe_ini_text(
+                trim_path,
+                explicit_angou=explicit_angou,
+            )
+        except ValueError as exc:
+            eprint(f"error: {exc}")
+            return 2
+        except Exception as exc:
+            eprint(f"error: {exc}")
+            return 1
         trim_table = _parse_bgm_table(gei_txt)
         if not trim_table:
-            eprint("error: no #BGM.* entries found in Gameexe.dat")
+            eprint("error: no #BGM.* entries found")
             return 1
         needs_ffmpeg = any(
             os.path.splitext(path)[1].lower() == ".owp" for path in files

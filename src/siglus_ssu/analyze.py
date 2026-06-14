@@ -6,15 +6,10 @@ from .common import (
     fmt_ts,
     read_bytes,
     sha1,
-    decode_text_auto,
-    exe_angou_element,
-    ANGOU_DAT_NAME,
-    find_named_path,
-    find_siglus_engine_exe,
-    siglus_engine_exe_element,
     looks_like_siglus_dat,
     parse_gei_disam_args,
-    angou_to_exe_el,
+    consume_angou_option,
+    iter_exe_el_sources,
 )
 from . import pck
 from . import dat
@@ -44,106 +39,31 @@ def _fmt_key_txt(el: bytes) -> str:
     return ", ".join(f"0x{x:02X}" for x in b)
 
 
-def _analyze_angou_blob(path: str, blob: bytes, st, is_exe: bool = False) -> int:
-    exe_el = siglus_engine_exe_element(blob) if is_exe else b""
+def analyze_angou_dat(value: str) -> int:
+    try:
+        sources = list(iter_exe_el_sources(explicit_angou=value))
+    except ValueError as e:
+        sys.stderr.write(str(e) + "\n")
+        return 2
     print("==== Analyze ====")
-    print(f"file: {path}")
-    print(f"type: {'siglusengine.exe' if is_exe else 'angou.dat'}")
-    print(f"size: {len(blob):d} bytes ({hx(len(blob))})")
-    print(f"mtime: {fmt_ts(st.st_mtime)}")
-    print(f"sha1: {sha1(blob)}")
+    print(f"input: {value}")
+    print("type: angou")
     print()
-    if is_exe:
-        if exe_el:
-            print(f"key.txt: {_fmt_key_txt(exe_el)}")
-            return 0
+    if not sources:
         print("key.txt: ")
         return 1
-    try:
-        t, _, _ = decode_text_auto(blob)
-    except Exception:
-        try:
-            t = blob.decode("utf-8", "ignore")
-        except Exception:
-            t = ""
-    s0 = str((t or "").split("\n", 1)[0]).strip("\r\n")
-    print(f"angou: {s0}")
-    mb = s0.encode("cp932", "ignore") if s0 else b""
-    exe_el = exe_angou_element(mb) if mb else b""
-    if exe_el:
-        print(f"key.txt: {_fmt_key_txt(exe_el)}")
-    else:
-        print("key.txt: ")
+    for src in sources:
+        print(f"source: {src.get('label')}")
+        print(f"kind: {src.get('kind')}")
+        if src.get("path"):
+            print(f"path: {src.get('path')}")
+        if src.get("inner"):
+            print(f"inner: {src.get('inner')}")
+        if src.get("angou"):
+            print(f"angou: {src.get('angou')}")
+        print(f"key.txt: {_fmt_key_txt(src.get('exe_el') or b'')}")
+        break
     return 0
-
-
-def _looks_like_missing_path(value: str) -> bool:
-    s = str(value or "")
-    if os.sep and os.sep in s:
-        return True
-    if os.altsep and os.altsep in s:
-        return True
-    if len(s) >= 2 and s[1] == ":":
-        return True
-    ext = os.path.splitext(s)[1].casefold()
-    return ext in (".dat", ".pck", ".exe", ".txt")
-
-
-def _analyze_angou_literal(text: str) -> int:
-    s0 = str((text or "").split("\n", 1)[0]).strip("\r\n")
-    print("==== Analyze ====")
-    print("input: literal")
-    print("type: angou.dat")
-    print()
-    print(f"angou: {s0}")
-    exe_el = angou_to_exe_el(s0)
-    if exe_el:
-        print(f"key.txt: {_fmt_key_txt(exe_el)}")
-    else:
-        print("key.txt: ")
-    return 0
-
-
-def analyze_angou_dat(path: str) -> int:
-    if os.path.isdir(path):
-        p = find_named_path(path, ANGOU_DAT_NAME, recursive=False)
-        if p:
-            return analyze_angou_dat(p)
-        ep = find_siglus_engine_exe(path)
-        if ep:
-            return analyze_angou_dat(ep)
-        sys.stderr.write(
-            f"not found: {os.path.join(path, ANGOU_DAT_NAME)} or SiglusEngine*.exe\n"
-        )
-        return 2
-    if not os.path.exists(path):
-        if not _looks_like_missing_path(path):
-            return _analyze_angou_literal(str(path or ""))
-        sys.stderr.write(f"not found: {path}\n")
-        return 2
-    blob = read_bytes(path)
-    st = os.stat(path)
-    bn = os.path.basename(path or "")
-    cf = bn.casefold()
-    is_exe = cf.startswith("siglusengine") and cf.endswith(".exe")
-    if is_exe:
-        return _analyze_angou_blob(path, blob, st, is_exe=True)
-    is_pck = cf.endswith(".pck") or pck.looks_like_pck(blob)
-    if is_pck:
-        if not pck.looks_like_pck(blob):
-            sys.stderr.write(f"not a supported .pck file: {path}\n")
-            return 1
-        try:
-            name, raw = pck.extract_pck_angou_dat(blob)
-        except Exception as e:
-            sys.stderr.write(f"failed to extract {ANGOU_DAT_NAME} from {path}: {e!s}\n")
-            return 1
-        if not raw:
-            sys.stderr.write(f"not found: {path}!{ANGOU_DAT_NAME}\n")
-            return 2
-        inner = name or ANGOU_DAT_NAME
-        return _analyze_angou_blob(f"{path}!{inner}", raw, st)
-    return _analyze_angou_blob(path, blob, st)
 
 
 def _detect_type(path, blob):
@@ -171,7 +91,13 @@ def _detect_type(path, blob):
     return "bin"
 
 
-def analyze_file(path, readall=False, apply=False, dat_disam=False):
+def analyze_file(
+    path,
+    readall=False,
+    apply=False,
+    dat_disam=False,
+    explicit_angou: str = "",
+):
     if not os.path.exists(path):
         sys.stderr.write(f"not found: {path}\n")
         return 2
@@ -189,14 +115,37 @@ def analyze_file(path, readall=False, apply=False, dat_disam=False):
         print(f"unsupported file type for -a mode: {ftype}")
         print("only .pck, .dat, .gan, .sav, .cgm and .tcr are supported.")
         return 1
+    if explicit_angou and ftype not in ("pck", "dat"):
+        sys.stderr.write("analyze: --angou is only valid for .pck/.dat in this mode\n")
+        return 2
     if apply and ftype != "sav":
         print("--apply supports global.sav only.")
         return 1
     if ftype == "gan":
         return gan.gan(blob)
     if ftype == "pck":
-        return pck.pck(blob, input_pck=path)
+        return pck.pck(blob, input_pck=path, explicit_angou=explicit_angou)
     if ftype == "dat":
+        if explicit_angou or not looks_like_siglus_dat(blob):
+            try:
+                cands = list(
+                    pck.iter_exe_el_candidates(
+                        os.path.dirname(os.path.abspath(path)) or ".",
+                        explicit_angou=explicit_angou,
+                        with_sources=True,
+                    )
+                )
+            except ValueError as e:
+                sys.stderr.write(str(e) + "\n")
+                return 2
+            decoded_blob, _used = dat.decode_scn_dat_with_candidates(
+                blob, cands, trace=True
+            )
+            if looks_like_siglus_dat(decoded_blob):
+                blob = decoded_blob
+            elif explicit_angou:
+                sys.stderr.write("failed to decode scene .dat with --angou\n")
+                return 1
         return dat.dat(
             path,
             blob,
@@ -253,7 +202,13 @@ def analyze_file(path, readall=False, apply=False, dat_disam=False):
     return 0
 
 
-def compare_files(p1, p2, compare_payload=False, dat_disam=False):
+def compare_files(
+    p1,
+    p2,
+    compare_payload=False,
+    dat_disam=False,
+    explicit_angou: str = "",
+):
     if not os.path.exists(p1) or not os.path.exists(p2):
         sys.stderr.write("not found\n")
         return 2
@@ -273,20 +228,68 @@ def compare_files(p1, p2, compare_payload=False, dat_disam=False):
         print(f"unsupported file type for -a mode (type1={t1} type2={t2})")
         print("only .pck, .dat, .gan, .sav, .cgm and .tcr are supported.")
         return 1
+    if explicit_angou and (t1 not in ("pck", "dat") or t2 not in ("pck", "dat")):
+        sys.stderr.write("analyze: --angou is only valid for .pck/.dat in this mode\n")
+        return 2
     if t1 != t2:
         print("Different types; structural compare is skipped.")
         print()
         print("--- Analyze file1 ---")
-        analyze_file(p1, dat_disam=dat_disam)
+        analyze_file(p1, dat_disam=dat_disam, explicit_angou=explicit_angou)
         print()
         print("--- Analyze file2 ---")
-        analyze_file(p2, dat_disam=dat_disam)
+        analyze_file(p2, dat_disam=dat_disam, explicit_angou=explicit_angou)
         return 0
     if t1 == "gan":
         return gan.compare_gan(b1, b2)
     if t1 == "pck":
-        return pck.compare_pck(p1, p2, b1, b2, compare_payload=compare_payload)
+        return pck.compare_pck(
+            p1,
+            p2,
+            b1,
+            b2,
+            compare_payload=compare_payload,
+            explicit_angou=explicit_angou,
+        )
     if t1 == "dat":
+        need_decode1 = explicit_angou or not looks_like_siglus_dat(b1)
+        need_decode2 = explicit_angou or not looks_like_siglus_dat(b2)
+        if need_decode1 or need_decode2:
+            try:
+                cands1 = list(
+                    pck.iter_exe_el_candidates(
+                        os.path.dirname(os.path.abspath(p1)) or ".",
+                        explicit_angou=explicit_angou,
+                        with_sources=True,
+                    )
+                )
+                cands2 = list(
+                    pck.iter_exe_el_candidates(
+                        os.path.dirname(os.path.abspath(p2)) or ".",
+                        explicit_angou=explicit_angou,
+                        with_sources=True,
+                    )
+                )
+            except ValueError as e:
+                sys.stderr.write(str(e) + "\n")
+                return 2
+            if need_decode1:
+                decoded_b1, _used1 = dat.decode_scn_dat_with_candidates(
+                    b1, cands1, trace=True
+                )
+                if looks_like_siglus_dat(decoded_b1):
+                    b1 = decoded_b1
+            if need_decode2:
+                decoded_b2, _used2 = dat.decode_scn_dat_with_candidates(
+                    b2, cands2, trace=True
+                )
+                if looks_like_siglus_dat(decoded_b2):
+                    b2 = decoded_b2
+            if explicit_angou and (
+                not looks_like_siglus_dat(b1) or not looks_like_siglus_dat(b2)
+            ):
+                sys.stderr.write("failed to decode scene .dat with --angou\n")
+                return 1
         return dat.compare_dat(
             p1,
             p2,
@@ -311,6 +314,11 @@ def main(argv=None):
     args = list(argv)
     if (not args) or args[0] in ("-h", "--help", "help"):
         return 2
+    try:
+        args, explicit_angou = consume_angou_option(args)
+    except ValueError as e:
+        sys.stderr.write(str(e) + "\n")
+        return 2
     word = False
     if "--word" in args:
         args.remove("--word")
@@ -334,34 +342,47 @@ def main(argv=None):
     if "--payload" in args:
         args.remove("--payload")
         compare_payload = True
-    angou = False
-    if "--angou" in args:
-        args.remove("--angou")
-        angou = True
     if apply and (compare_payload or _disam):
         return 2
     if word:
-        if gei or _disam or readall or apply or compare_payload or angou:
-            return 2
-        if len(args) == 1:
-            return pck.pck_word_count(args[0])
-        if len(args) == 2:
-            return pck.pck_word_count(args[0], args[1])
-        return 2
-    if angou:
         if gei or _disam or readall or apply or compare_payload:
             return 2
-        if len(args) != 1:
-            sys.stderr.write("angou.dat compare is not supported\n")
+        if explicit_angou:
+            try:
+                list(iter_exe_el_sources(explicit_angou=explicit_angou))
+            except ValueError as e:
+                sys.stderr.write(str(e) + "\n")
+                return 2
+        if len(args) == 1:
+            return pck.pck_word_count(args[0], explicit_angou=explicit_angou)
+        if len(args) == 2:
+            return pck.pck_word_count(
+                args[0],
+                args[1],
+                explicit_angou=explicit_angou,
+            )
+        return 2
+    if explicit_angou and not args:
+        if gei or _disam or readall or apply or compare_payload:
             return 2
-        return analyze_angou_dat(args[0])
+        return analyze_angou_dat(explicit_angou)
+    if explicit_angou and args:
+        try:
+            list(iter_exe_el_sources(explicit_angou=explicit_angou))
+        except ValueError as e:
+            sys.stderr.write(str(e) + "\n")
+            return 2
     if gei:
         if readall or apply or compare_payload or _disam:
             return 2
         if len(args) == 1:
-            return dat.analyze_gameexe_dat(args[0])
+            return dat.analyze_gameexe_dat(args[0], explicit_angou=explicit_angou)
         if len(args) == 2:
-            return dat.compare_gameexe_dat(args[0], args[1])
+            return dat.compare_gameexe_dat(
+                args[0],
+                args[1],
+                explicit_angou=explicit_angou,
+            )
         return 2
     if len(args) == 1:
         if readall and apply:
@@ -371,6 +392,7 @@ def main(argv=None):
             readall=readall,
             apply=apply,
             dat_disam=dat_disam,
+            explicit_angou=explicit_angou,
         )
     if len(args) == 2:
         if readall or apply:
@@ -380,5 +402,6 @@ def main(argv=None):
             args[1],
             compare_payload=compare_payload,
             dat_disam=dat_disam,
+            explicit_angou=explicit_angou,
         )
     return 2
