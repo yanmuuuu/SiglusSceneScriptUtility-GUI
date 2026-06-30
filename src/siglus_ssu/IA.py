@@ -19,13 +19,27 @@ C = get_const_module()
 
 
 class IncAnalyzer:
-    def __init__(self, text, parent_form, iad, iad2):
+    def __init__(self, text, parent_form, iad, iad2, source_map=None, *, sidecar=False):
         self.t = text
         self.pf = parent_form
         self.iad = iad
         self.iad2 = iad2
         self.el = -1
         self.es = ""
+        self.sidecar = bool(sidecar)
+        self._last_name_line = 1
+        self._last_name_start = -1
+        self._last_name_end = -1
+        self._last_after_text = ""
+        self._last_after_source_map = []
+        self.input_source_map = (
+            source_map if self.sidecar and isinstance(source_map, list) else []
+        )
+        self.source_map_from_input = bool(self.input_source_map)
+        self.source_map = []
+        if self.sidecar and isinstance(self.iad2, dict):
+            self.iad2.setdefault("decls", [])
+            self.iad2.setdefault("bodies", [])
 
     def err(self, line, s):
         if not self.es:
@@ -47,11 +61,35 @@ class IncAnalyzer:
             unclosed_double_message="Double quote is not closed.",
             unclosed_block_message=" Comment (/*) is not closed.",
             allow_trailing_escape_eof=True,
+            with_map=self.sidecar,
         )
         if not result.get("ok"):
             self.err(result.get("line", 0), result.get("message", ""))
             return 0
         self.t = result.get("text", "")
+        if self.sidecar:
+            source_map = (
+                list(result.get("source_map") or [])
+                if isinstance(result.get("source_map"), list)
+                else []
+            )
+            if self.input_source_map:
+                composed = []
+                for point in source_map:
+                    source_index = -1
+                    if isinstance(point, (list, tuple)) and len(point) >= 3:
+                        try:
+                            source_index = int(point[2])
+                        except (TypeError, ValueError):
+                            source_index = -1
+                    if 0 <= source_index < len(self.input_source_map):
+                        composed.append(self.input_source_map[source_index])
+                    else:
+                        composed.append(point)
+                source_map = composed
+            self.source_map = source_map
+        else:
+            self.source_map = []
         return 1
 
     def _skip(self, i, line):
@@ -291,15 +329,96 @@ class IncAnalyzer:
         if not ok:
             self.err(line, "name missing")
             return None, i, line
+        self._last_name_line = line
         st = i
         t = self.t
         while i < len(t) and t[i] not in stopset:
             i += 1
         s = t[st:i]
+        self._last_name_start = st
+        self._last_name_end = i
         if s == "":
             self.err(line, "name missing")
             return None, i, line
         return s, i, line
+
+    def _span_from_offsets(self, start, end, line):
+        if (
+            self.sidecar
+            and start >= 0
+            and end > start
+            and isinstance(self.source_map, list)
+        ):
+            points = [
+                self.source_map[pos]
+                for pos in range(start, min(end, len(self.source_map)))
+                if self.source_map[pos] is not None
+            ]
+            if points:
+                lines = {int(point[0]) for point in points}
+                if len(lines) == 1:
+                    chars = [int(point[1]) for point in points]
+                    return (
+                        next(iter(lines)),
+                        min(chars),
+                        max(chars) + 1,
+                        self.source_map_from_input,
+                    )
+        text = self.t[: max(0, start)]
+        line_start = text.rfind("\n") + 1
+        return (
+            int(line or 1),
+            max(0, start - line_start),
+            max(0, end - line_start),
+            False,
+        )
+
+    def _record_decl(self, kind, name, line, directive, start=-1, end=-1):
+        if not self.sidecar or not isinstance(self.iad2, dict) or not name:
+            return
+        line, start_char, end_char, source_mapped = self._span_from_offsets(
+            start, end, line
+        )
+        self.iad2.setdefault("decls", []).append(
+            {
+                "kind": kind,
+                "name": name,
+                "line": int(line or 1),
+                "start_char": int(start_char),
+                "end_char": int(end_char),
+                "directive": directive,
+                "parent_form": self.pf,
+                "source_mapped": bool(source_mapped),
+            }
+        )
+
+    def _record_body(self, kind, name, args=None):
+        if (
+            not self.sidecar
+            or not isinstance(self.iad2, dict)
+            or not name
+            or not self._last_after_text
+        ):
+            return
+        arg_names = [
+            str(item.get("name", "") or "")
+            for item in (args or [])
+            if isinstance(item, dict) and str(item.get("name", "") or "")
+        ]
+        source_map = [
+            list(item) if isinstance(item, tuple) else item
+            for item in self._last_after_source_map
+        ]
+        self.iad2.setdefault("bodies", []).append(
+            {
+                "kind": kind,
+                "name": name,
+                "text": self._last_after_text,
+                "source_map": source_map,
+                "args": arg_names,
+                "parent_form": self.pf,
+            }
+        )
 
     def _macro_arg_list(self, i, line):
         args = []
@@ -361,14 +480,23 @@ class IncAnalyzer:
         t = self.t
         n = len(t)
         after = []
+        after_source_map = []
         ifs = [0] * 16
         d = 0
+        self._last_after_text = ""
+        self._last_after_source_map = []
+
+        def source_at(pos):
+            return self.source_map[pos] if 0 <= pos < len(self.source_map) else None
+
         i, line, ok = self._skip(i, line)
         if not ok:
             return "", i, line, 1
         while i < n:
             if t.startswith("##", i):
                 after.append("#")
+                if self.sidecar:
+                    after_source_map.append(source_at(i))
                 i += 2
                 continue
             if t.startswith("#ifdef", i):
@@ -421,6 +549,8 @@ class IncAnalyzer:
             c = t[i]
             if c == "\n":
                 after.append(" ")
+                if self.sidecar:
+                    after_source_map.append(source_at(i))
                 line += 1
                 i += 1
                 continue
@@ -430,6 +560,8 @@ class IncAnalyzer:
             if c == "#":
                 break
             after.append(c)
+            if self.sidecar:
+                after_source_map.append(source_at(i))
             i += 1
         s = "".join(after)
         j = len(s) - 1
@@ -437,22 +569,59 @@ class IncAnalyzer:
             j -= 1
         if j >= 0:
             s = s[: j + 1]
+            if self.sidecar:
+                after_source_map = after_source_map[: j + 1]
+        else:
+            after_source_map = []
+        self._last_after_text = s
+        self._last_after_source_map = after_source_map if self.sidecar else []
         return s, i, line, 1
 
-    def _prop_cmd_text(self, i, line):
+    def _prop_cmd_text(self, i, line, name_stopset):
         i2, line2, ok = self._skip(i, line)
         if not ok:
-            return "", i2, line2, line
+            return (
+                "",
+                i2,
+                line2,
+                line,
+                {
+                    "line": line,
+                    "start_char": 0,
+                    "end_char": 0,
+                    "source_mapped": False,
+                },
+            )
         name_line = line2
         st = i2
         t = self.t
         n = len(t)
+        name_end = st
+        while name_end < n and t[name_end] not in name_stopset:
+            name_end += 1
+        if self.sidecar:
+            span_line, start_char, end_char, source_mapped = self._span_from_offsets(
+                st, name_end, name_line
+            )
+        else:
+            span_line, start_char, end_char, source_mapped = name_line, 0, 0, False
         j = i2
         while j < n and t[j] != "#":
             if t[j] == "\n":
                 line2 += 1
             j += 1
-        return t[st:j], j, line2, name_line
+        return (
+            t[st:j],
+            j,
+            line2,
+            name_line,
+            {
+                "line": span_line,
+                "start_char": start_char,
+                "end_char": end_char,
+                "source_mapped": bool(source_mapped),
+            },
+        )
 
     def _decl_type(self, i, line):
         i, line, ok = self._skip(i, line)
@@ -485,6 +654,7 @@ class IncAnalyzer:
             )
             if nm is None:
                 return None, i, line, 0
+            name_line = self._last_name_line
             after, i, line, ok = self._after(i, line)
             if not ok:
                 return None, i, line, 0
@@ -513,11 +683,21 @@ class IncAnalyzer:
             add_replace_tree(self.iad["replace_tree"], nm, rep)
             self.iad.setdefault("macro_defs", []).append(rep)
             self.iad.setdefault("macro_map", {})[nm] = rep
+            self._record_decl(
+                "replace" if tp == "replace" else "define",
+                nm,
+                name_line,
+                "#" + tp,
+                self._last_name_start,
+                self._last_name_end,
+            )
+            self._record_body("replace" if tp == "replace" else "define", nm)
             return rep, i, line, 1
         if tp == "macro":
             nm, i, line = self._name_until(i, line, set(" \t\n("))
             if nm is None:
                 return None, i, line, 0
+            name_line = self._last_name_line
             args, i, line = self._macro_arg_list(i, line)
             if args is None:
                 return None, i, line, 0
@@ -545,16 +725,29 @@ class IncAnalyzer:
             add_replace_tree(self.iad["replace_tree"], nm, rep)
             self.iad.setdefault("macro_defs", []).append(rep)
             self.iad.setdefault("macro_map", {})[nm] = rep
+            self._record_decl(
+                "macro",
+                nm,
+                name_line,
+                "#macro",
+                self._last_name_start,
+                self._last_name_end,
+            )
+            self._record_body("macro", nm, args)
             return rep, i, line, 1
         if tp == "property":
-            txt, i, line, name_line = self._prop_cmd_text(i, line)
+            txt, i, line, name_line, span = self._prop_cmd_text(i, line, set(" :\t\n"))
             self.iad2["pt"].append(txt)
             self.iad2["pl"].append(name_line)
+            if self.sidecar:
+                self.iad2.setdefault("ps", []).append(span)
             return None, i, line, 1
         if tp == "command":
-            txt, i, line, name_line = self._prop_cmd_text(i, line)
+            txt, i, line, name_line, span = self._prop_cmd_text(i, line, set(" (:\t\n"))
             self.iad2["ct"].append(txt)
             self.iad2["cl"].append(name_line)
+            if self.sidecar:
+                self.iad2.setdefault("cs", []).append(span)
             return None, i, line, 1
         if tp == "expand":
             after, i2, line2, ok = self._after(i, line)
@@ -585,7 +778,7 @@ class IncAnalyzer:
         return 1
 
     def step2(self):
-        for txt, ln in zip(self.iad2["pt"], self.iad2["pl"]):
+        for idx, (txt, ln) in enumerate(zip(self.iad2["pt"], self.iad2["pl"])):
             ca = CharacterAnalizer()
             t = ca.analize_line(txt, self.iad)
             if t is None:
@@ -632,7 +825,25 @@ class IncAnalyzer:
             self.iad["_ft_user_added"] = 1
             if self.pf == C.FM_GLOBAL:
                 self.iad["inc_property_cnt"] += 1
-        for txt, ln in zip(self.iad2["ct"], self.iad2["cl"]):
+            if self.sidecar:
+                span = (
+                    self.iad2.get("ps", [])[idx]
+                    if idx < len(self.iad2.get("ps", []))
+                    else {}
+                )
+                self.iad2.setdefault("decls", []).append(
+                    {
+                        "kind": "property",
+                        "name": name,
+                        "line": int(span.get("line", ln) or ln),
+                        "start_char": int(span.get("start_char", 0) or 0),
+                        "end_char": int(span.get("end_char", 0) or 0),
+                        "directive": "#property",
+                        "parent_form": self.pf,
+                        "source_mapped": bool(span.get("source_mapped")),
+                    }
+                )
+        for idx, (txt, ln) in enumerate(zip(self.iad2["ct"], self.iad2["cl"])):
             org_line = ln
             ca = CharacterAnalizer()
             t = ca.analize_line(txt, self.iad)
@@ -701,4 +912,22 @@ class IncAnalyzer:
             self.iad["_ft_user_added"] = 1
             if self.pf == C.FM_GLOBAL:
                 self.iad["inc_command_cnt"] += 1
+            if self.sidecar:
+                span = (
+                    self.iad2.get("cs", [])[idx]
+                    if idx < len(self.iad2.get("cs", []))
+                    else {}
+                )
+                self.iad2.setdefault("decls", []).append(
+                    {
+                        "kind": "command",
+                        "name": name,
+                        "line": int(span.get("line", org_line) or org_line),
+                        "start_char": int(span.get("start_char", 0) or 0),
+                        "end_char": int(span.get("end_char", 0) or 0),
+                        "directive": "#command",
+                        "parent_form": self.pf,
+                        "source_mapped": bool(span.get("source_mapped")),
+                    }
+                )
         return 1

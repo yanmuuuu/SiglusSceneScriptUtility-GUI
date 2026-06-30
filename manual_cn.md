@@ -190,7 +190,7 @@ siglus-ssu init
 siglus-ssu init --force
 
 # 强制从特定标签重新下载 const.py
-siglus-ssu init --force --ref v0.3.6
+siglus-ssu init --force --ref v0.3.7
 ```
 
 ---
@@ -212,8 +212,8 @@ siglus-ssu -lsp [--serial]
 #### 说明
 
 - 官方启动入口：`siglus-ssu -lsp`
-- 默认会并行执行工作区级别的符号扫描与链接扫描；如需强制串行，可传入 `--serial`
-- LSP 会跨会话持久化工作区索引，并且只有在 `.inc` / `.ss` 的 MD5 输入表、程序版本与 const profile 都匹配时才复用。存在未保存的编辑器缓冲区时会跳过持久索引。默认缓存目录在 Windows 上是 `%LOCALAPPDATA%\siglus_ssu\lsp-index`，在类 Unix 系统上是 `$XDG_CACHE_HOME/siglus_ssu/lsp-index`，否则回退到 `~/.cache/siglus_ssu/lsp-index`；可用 `SIGLUS_SSU_LSP_CACHE_DIR` 覆盖。
+- 默认会并行执行工作区级别的符号扫描与链接扫描；如需强制串行，可传入 `--serial`。工作区索引遵循编译依赖模型：`.inc` 改动会重建整个目录索引；`.ss` 改动会复用当前 `.inc` 上下文，并且只重新扫描改动过的场景文件。
+- LSP 会跨会话持久化工作区索引。只有 `.inc` MD5 表、`.ss` 文件集合、程序版本与 const profile 都匹配时，才会加载兼容的持久缓存；其中单个 `.ss` 扫描条目只有在该场景文件自身 MD5 仍匹配时才复用，否则只会重扫发生变化的场景文件。存在未保存的编辑器缓冲区时会跳过持久索引。默认缓存目录在 Windows 上是 `%LOCALAPPDATA%\siglus_ssu\lsp-index`，在类 Unix 系统上是 `$XDG_CACHE_HOME/siglus_ssu/lsp-index`，否则回退到 `~/.cache/siglus_ssu/lsp-index`；可用 `SIGLUS_SSU_LSP_CACHE_DIR` 覆盖。
 - 当前能力：语义 token、push/pull 诊断、自动补全、悬停说明、跳转到定义、查找引用、客户端支持时的准备改名、改名、文档符号，以及同目录未保存 `.inc` 缓冲区对 `.ss` 分析结果的联动刷新；其中 pull 诊断只会在客户端支持 `textDocument/diagnostic` 时声明；当前语义 token 分类包含台词文本、system element（系统指令）、角色名，以及带“已使用 / 未使用”区分的宏声明
 - 服务会协商客户端 position encoding，返回带范围的补全编辑，按客户端支持的 completion item kind 输出，支持长时间扫描的 work-done progress 取消，并会更严格地校验文档 URI 与请求结构。
 - 语言服务会在适用处直接复用与 `-c` 相同的编译流水线阶段（`CA`、`LA`、`SA`、`MA`、`BS`）；语义分类来自这条与编译器对齐的分析结果，而 LSP 层负责恢复源文本范围，并把结果封装成 semantic token、location 与 edit

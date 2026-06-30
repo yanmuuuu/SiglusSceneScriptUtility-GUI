@@ -6,6 +6,7 @@ C = get_const_module()
 
 def la_analize(pcad):
     s = pcad["scn_text"] + ("\0" * 256)
+    sidecar = bool(pcad.get("sidecar")) or isinstance(pcad.get("scn_source_map"), list)
     cur_id = 0
     cur_line = 1
     atom_list = []
@@ -13,6 +14,17 @@ def la_analize(pcad):
     label_list = []
     label_map = {}
     unknown_list = []
+    atom_span_list = []
+    source_map = (
+        pcad.get("scn_source_map")
+        if sidecar and isinstance(pcad.get("scn_source_map"), list)
+        else []
+    )
+    line_starts = [0]
+    if sidecar:
+        for pos, ch in enumerate(str(pcad.get("scn_text", ""))):
+            if ch == "\n":
+                line_starts.append(pos + 1)
 
     def err(line, msg):
         return None, {"line": line, "str": msg}
@@ -38,6 +50,35 @@ def la_analize(pcad):
     def to_i32(v):
         v = int(v) & 0xFFFFFFFF
         return v if v < 0x80000000 else v - 0x100000000
+
+    def fallback_span(start, end, line):
+        line_index = max(0, min(int(line or 1) - 1, len(line_starts) - 1))
+        line_start = line_starts[line_index] if line_starts else 0
+        return {
+            "line": line_index + 1,
+            "start_char": max(0, start - line_start),
+            "end_char": max(0, end - line_start),
+            "text": s[start:end],
+        }
+
+    def token_span(start, end, line):
+        if source_map:
+            points = [
+                source_map[pos]
+                for pos in range(start, min(end, len(source_map)))
+                if source_map[pos] is not None
+            ]
+            if points:
+                lines = {int(point[0]) for point in points}
+                if len(lines) == 1:
+                    chars = [int(point[1]) for point in points]
+                    return {
+                        "line": next(iter(lines)),
+                        "start_char": min(chars),
+                        "end_char": max(chars) + 1,
+                        "text": s[start:end],
+                    }
+        return fallback_span(start, end, line)
 
     keywords = {
         "command": "COMMAND",
@@ -70,6 +111,7 @@ def la_analize(pcad):
             "subopt": 0,
         }
         cur_id += 1
+        token_start = i
         c = s[i]
         if c == "\u3010":
             a["type"] = C.LA_T["OPEN_SUMI"]
@@ -296,14 +338,24 @@ def la_analize(pcad):
             return err(cur_line, "Invalid character: '" + c + "'")
         if a["type"] != C.LA_T["NONE"]:
             atom_list.append(a)
+            if sidecar:
+                atom_span_list.append(token_span(token_start, i, cur_line))
     atom_list.append(
         {"id": cur_id, "line": cur_line, "type": C.LA_T["EOF"], "opt": 0, "subopt": 0}
     )
+    if sidecar:
+        eof_span = fallback_span(
+            len(pcad.get("scn_text", "")), len(pcad.get("scn_text", "")), cur_line
+        )
+        atom_span_list.append(eof_span)
     cur_id += 1
     str_list.append("dummy")
-    return {
+    lad = {
         "atom_list": atom_list,
         "str_list": str_list,
         "label_list": label_list,
         "unknown_list": unknown_list,
-    }, None
+    }
+    if sidecar:
+        lad["atom_span_list"] = atom_span_list
+    return lad, None

@@ -190,7 +190,7 @@ siglus-ssu init
 siglus-ssu init --force
 
 # Force a download from a specific tagged release
-siglus-ssu init --force --ref v0.3.6
+siglus-ssu init --force --ref v0.3.7
 ```
 
 ---
@@ -212,8 +212,8 @@ siglus-ssu -lsp [--serial]
 #### Notes
 
 - Official entrypoint: `siglus-ssu -lsp`
-- By default, workspace-wide symbol and link scans run in parallel; use `--serial` to force serial scanning when needed
-- The LSP persists workspace indexes across sessions and reuses them only when the `.inc` / `.ss` MD5 input table, package version, and const profile match. Unsaved editor overlays bypass the persistent index. The default cache directory is `%LOCALAPPDATA%\siglus_ssu\lsp-index` on Windows, `$XDG_CACHE_HOME/siglus_ssu/lsp-index` on Unix-like systems, or `~/.cache/siglus_ssu/lsp-index`; set `SIGLUS_SSU_LSP_CACHE_DIR` to override it.
+- By default, workspace-wide symbol and link scans run in parallel; use `--serial` to force serial scanning when needed. The workspace index follows the compiler dependency model: `.inc` changes rebuild the full directory index, while `.ss` changes reuse the current `.inc` context and rescan only changed scene files.
+- The LSP persists workspace indexes across sessions. A compatible persistent cache is loaded only when the `.inc` MD5 table, `.ss` file set, package version, and const profile match; individual `.ss` scan entries are reused only when that scene file's own MD5 still matches, otherwise only the changed scene files are rescanned. Unsaved editor overlays bypass the persistent index. The default cache directory is `%LOCALAPPDATA%\siglus_ssu\lsp-index` on Windows, `$XDG_CACHE_HOME/siglus_ssu/lsp-index` on Unix-like systems, or `~/.cache/siglus_ssu/lsp-index`; set `SIGLUS_SSU_LSP_CACHE_DIR` to override it.
 - Current capabilities: semantic tokens, publish/pull diagnostics, completion, hover, go to definition, find references, prepare rename when the client supports it, rename, document symbols, and live same-directory `.inc` overlay refresh for `.ss` analysis; pull diagnostics are advertised only when the client supports `textDocument/diagnostic`; the current semantic token categories include dialogue text, system elements, speaker names, and macro declarations with used/unused distinction
 - The server negotiates client position encodings, returns range-aware completion edits, respects supported completion item kinds, supports work-done progress cancellation on long scans, and validates document URIs and request shapes defensively.
 - The language service reuses the same `-c` compiler pipeline stages (`CA`, `LA`, `SA`, `MA`, `BS`) wherever they apply; semantic classification comes from that compiler-aligned analysis, while the LSP layer recovers source ranges and packages the results as semantic tokens, locations, and edits

@@ -93,11 +93,13 @@ def search_replace_tree(rt, text, pos):
 
 
 class CharacterAnalizer:
-    def __init__(self):
+    def __init__(self, *, sidecar=False):
         self.error_line = 0
         self.error_str = ""
         self.m_line = 1
         self.iad = None
+        self.sidecar = bool(sidecar)
+        self.source_map_1 = []
 
     def error(self, line, s):
         self.error_line = line
@@ -148,16 +150,28 @@ class CharacterAnalizer:
             unclosed_single_message="Unclosed single quote.",
             unclosed_double_message="Unclosed double quote.",
             unclosed_block_message="Unclosed /* comment.",
+            with_map=self.sidecar,
         )
         if not result.get("ok"):
             return self.error(result.get("line", 0), result.get("message", ""))
         self.m_line = int(result.get("line", 1) or 1)
+        if self.sidecar:
+            self.source_map_1 = (
+                list(result.get("source_map") or [])
+                if isinstance(result.get("source_map"), list)
+                else []
+            )
+        else:
+            self.source_map_1 = []
         return result.get("text", "")
 
     def analize_file_2(self, in_text):
         t = in_text + ("\0" * 256)
         out = []
         inc = []
+        out_source_map = []
+        inc_source_map = []
+        source_map = self.source_map_1 if isinstance(self.source_map_1, list) else []
         inc_line_map = []
         stats = {
             "ifdef": 0,
@@ -176,6 +190,9 @@ class CharacterAnalizer:
         incs = False
         i = 0
         excluded_line = False
+
+        def source_at(pos):
+            return source_map[pos] if 0 <= pos < len(source_map) else None
 
         while t[i] != "\0":
             c = t[i]
@@ -310,15 +327,23 @@ class CharacterAnalizer:
                     if not inc_line_map:
                         inc_line_map.append(source_line)
                     inc.append(c)
+                    if self.sidecar:
+                        inc_source_map.append(source_at(i))
                     inc_line_map.append(source_line + 1)
                 out.append(c)
+                if self.sidecar:
+                    out_source_map.append(source_at(i))
             elif ifs[d] in (0, 1):
                 if incs:
                     if not inc_line_map:
                         inc_line_map.append(source_line)
                     inc.append(c)
+                    if self.sidecar:
+                        inc_source_map.append(source_at(i))
                 else:
                     out.append(c)
+                    if self.sidecar:
+                        out_source_map.append(source_at(i))
             else:
                 excluded_line = True
             i += 1
@@ -332,6 +357,15 @@ class CharacterAnalizer:
             return self.error(self.m_line, "Unclosed #inc_start.")
         if d > 0:
             return self.error(self.m_line, "Unclosed #ifdef.")
+        if self.sidecar:
+            return (
+                "".join(out),
+                "".join(inc),
+                inc_line_map,
+                stats,
+                out_source_map,
+                inc_source_map,
+            )
         return "".join(out), "".join(inc), inc_line_map, stats
 
     def _std_replace(self, text, pos, default_rt, added_rt):
@@ -516,8 +550,21 @@ class CharacterAnalizer:
             return 0
         scn, inc, inc_line_map = r[:3]
         preprocess_stats = dict(r[3]) if len(r) >= 4 and isinstance(r[3], dict) else {}
+        scn_source_map = (
+            list(r[4])
+            if self.sidecar and len(r) >= 5 and isinstance(r[4], list)
+            else []
+        )
+        inc_source_map = (
+            list(r[5])
+            if self.sidecar and len(r) >= 6 and isinstance(r[5], list)
+            else []
+        )
         pcad["inc_text"] = inc
         pcad["inc_line_map"] = inc_line_map
+        if self.sidecar:
+            pcad["sidecar"] = True
+            pcad["inc_source_map"] = inc_source_map
         if inc:
             preprocess_stats["inc_lines"] = inc.count("\n") + (
                 0 if inc.endswith("\n") else 1
@@ -527,7 +574,14 @@ class CharacterAnalizer:
         iad2 = {"pt": [], "pl": [], "ct": [], "cl": []}
         from .IA import IncAnalyzer
 
-        ia = IncAnalyzer(inc, C.FM_SCENE, piad, iad2)
+        ia = IncAnalyzer(
+            inc,
+            C.FM_SCENE,
+            piad,
+            iad2,
+            source_map=inc_source_map,
+            sidecar=self.sidecar,
+        )
         if not ia.step1():
             self.error(ia.el, "inc: " + ia.es)
             return 0
@@ -537,7 +591,12 @@ class CharacterAnalizer:
         if not ia.step2():
             self.error(ia.el, "inc: " + ia.es)
             return 0
+        if self.sidecar:
+            pcad["inc_iad2"] = iad2
         t = scn + ("\0" * 256)
+        if self.sidecar:
+            source_map = scn_source_map + ([None] * 256)
+            replace_uses = []
         self.m_line = 1
         loop = 0
         rest_min = len(t)
@@ -547,11 +606,65 @@ class CharacterAnalizer:
                 self.m_line += 1
                 p += 1
             else:
-                t, p, ok = self._std_replace(
-                    t, p, self.iad["replace_tree"], new_replace_tree()
-                )
-                if not ok:
-                    return 0
+                if self.sidecar:
+                    old_t = t
+                    old_p = p
+                    rep = search_replace_tree(self.iad["replace_tree"], t, p)
+                    t, p, ok = self._std_replace(
+                        t, p, self.iad["replace_tree"], new_replace_tree()
+                    )
+                    if not ok:
+                        return 0
+                    if t != old_t:
+                        if isinstance(rep, dict) and rep.get("name"):
+                            name = str(rep.get("name") or "")
+                            points = [
+                                source_map[pos]
+                                for pos in range(
+                                    old_p, min(old_p + len(name), len(source_map))
+                                )
+                                if source_map[pos] is not None
+                            ]
+                            if points:
+                                lines = {int(point[0]) for point in points}
+                                if len(lines) == 1:
+                                    chars = [int(point[1]) for point in points]
+                                    replace_uses.append(
+                                        {
+                                            "name": name,
+                                            "type": str(rep.get("type") or ""),
+                                            "decl_type": str(
+                                                rep.get("decl_type") or ""
+                                            ),
+                                            "line": next(iter(lines)),
+                                            "start_char": min(chars),
+                                            "end_char": max(chars) + 1,
+                                        }
+                                    )
+                        if isinstance(rep, dict) and rep.get("type") in (
+                            "define",
+                            "replace",
+                        ):
+                            inserted_len = len(str(rep.get("after", "") or ""))
+                            removed_len = len(str(rep.get("name", "") or ""))
+                        else:
+                            inserted_len = max(0, p - old_p)
+                            removed_len = max(0, len(old_t) - len(t) + inserted_len)
+                        removed_map = source_map[old_p : old_p + removed_len]
+                        if removed_map:
+                            replacement_map = [
+                                removed_map[min(map_index, len(removed_map) - 1)]
+                                for map_index in range(inserted_len)
+                            ]
+                        else:
+                            replacement_map = [None] * inserted_len
+                        source_map[old_p : old_p + removed_len] = replacement_map
+                else:
+                    t, p, ok = self._std_replace(
+                        t, p, self.iad["replace_tree"], new_replace_tree()
+                    )
+                    if not ok:
+                        return 0
             rest = len(t) - p
             if rest >= rest_min:
                 loop += 1
@@ -564,5 +677,8 @@ class CharacterAnalizer:
                 rest_min = rest
                 loop = 0
         pcad["scn_text"] = t.split("\0", 1)[0]
+        if self.sidecar:
+            pcad["scn_source_map"] = source_map[: len(pcad["scn_text"])]
+            pcad["replace_uses"] = replace_uses
         pcad.setdefault("property_list", [])
         return 1

@@ -120,6 +120,8 @@ class DefinitionRecord:
     detail: str = ""
     scope: str = ""
     signature: str = ""
+    start_char: int = -1
+    end_char: int = -1
 
 
 @dataclass(slots=True)
@@ -127,6 +129,7 @@ class ProjectContext:
     iad: dict[str, Any] | None
     definitions: dict[str, list[DefinitionRecord]]
     build_error: SourceDiagnostic | None = None
+    inc_iad2_by_path: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -143,13 +146,16 @@ class AnalysisResult:
     diagnostics: list[SourceDiagnostic] = field(default_factory=list)
     lad: dict[str, Any] | None = None
     sad: dict[str, Any] | None = None
+    mad: dict[str, Any] | None = None
     replace_tree: dict[str, Any] | None = None
+    inc_iad2: dict[str, Any] | None = None
     local_definitions: dict[str, list[DefinitionRecord]] = field(default_factory=dict)
     label_definitions: dict[str, DefinitionRecord] = field(default_factory=dict)
     z_label_definitions: dict[str, DefinitionRecord] = field(default_factory=dict)
     document_symbols: list[DefinitionRecord] = field(default_factory=list)
     occurrences: list[SymbolOccurrence] | None = None
     string_semantics: list[StringSemanticRange] | None = None
+    replace_uses: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -418,120 +424,56 @@ def _render_arg_list(arg_list: list[dict[str, Any]] | None) -> str:
     return "(" + ", ".join(parts) + ")"
 
 
-def _extract_inc_symbol_lines(
-    path: str,
-    text: str,
+def _mapped_inc_line(
+    line: int,
     source_text: str,
     line_map: list[int] | None = None,
-) -> list[DefinitionRecord]:
-    cleaned = str(text or "").replace("\r", "")
+) -> int:
     line_count = max(1, len(str(source_text or "").replace("\r", "").splitlines()))
-    out: list[DefinitionRecord] = []
-    lines = cleaned.split("\n")
-    for no, raw in enumerate(lines, start=1):
-        mapped_line = min(no, line_count)
-        if isinstance(line_map, list) and 0 <= (no - 1) < len(line_map):
-            try:
-                mapped_line = int(line_map[no - 1] or mapped_line)
-            except (TypeError, ValueError):
-                mapped_line = min(no, line_count)
-        mapped_line = max(1, min(mapped_line, line_count))
-        line = raw.lstrip(" \t")
-        if not line.startswith("#"):
-            continue
-        low = line.lower()
-        if low.startswith("#macro"):
-            rest = line[len("#macro") :].strip()
-            if rest:
-                name = re.split(r"[\s(]+", rest, 1)[0]
-                if name:
-                    out.append(
-                        DefinitionRecord(
-                            name=name,
-                            path=path,
-                            line=mapped_line,
-                            kind="macro",
-                            directive="#macro",
-                        )
-                    )
-            continue
-        if low.startswith("#define_s"):
-            rest = line[len("#define_s") :].lstrip(" \t")
-            name = rest.split("\t", 1)[0].rstrip(" ")
-            if name:
-                out.append(
-                    DefinitionRecord(
-                        name=name,
-                        path=path,
-                        line=mapped_line,
-                        kind="define",
-                        directive="#define_s",
-                    )
-                )
-            continue
-        if low.startswith("#define"):
-            rest = line[len("#define") :].strip()
-            if rest:
-                name = re.split(r"[\s]+", rest, 1)[0]
-                if name:
-                    out.append(
-                        DefinitionRecord(
-                            name=name,
-                            path=path,
-                            line=mapped_line,
-                            kind="define",
-                            directive="#define",
-                        )
-                    )
-            continue
-        if low.startswith("#replace"):
-            rest = line[len("#replace") :].strip()
-            if rest:
-                name = re.split(r"[\s]+", rest, 1)[0]
-                if name:
-                    out.append(
-                        DefinitionRecord(
-                            name=name,
-                            path=path,
-                            line=mapped_line,
-                            kind="replace",
-                            directive="#replace",
-                        )
-                    )
-    return out
+    mapped_line = min(max(1, int(line or 1)), line_count)
+    if isinstance(line_map, list) and 0 <= (mapped_line - 1) < len(line_map):
+        try:
+            mapped_line = int(line_map[mapped_line - 1] or mapped_line)
+        except (TypeError, ValueError):
+            mapped_line = min(max(1, int(line or 1)), line_count)
+    return max(1, min(mapped_line, line_count))
 
 
-def _extract_inc_decl_records(
-    path: str, text: str, iad2: dict[str, Any]
+def _extract_iad2_definition_records(
+    path: str,
+    source_text: str,
+    iad2: dict[str, Any],
+    line_map: list[int] | None = None,
 ) -> list[DefinitionRecord]:
     out: list[DefinitionRecord] = []
-    line_count = max(1, len(str(text or "").replace("\r", "").splitlines()))
-    for text, line in zip(iad2.get("pt", []), iad2.get("pl", [])):
-        rest = str(text or "").lstrip(" \t")
-        if not rest:
+    decls = iad2.get("decls") if isinstance(iad2, dict) else None
+    if not isinstance(decls, list):
+        return out
+    for decl in decls:
+        if not isinstance(decl, dict):
             continue
-        name = re.split(r"[\s:]+", rest, 1)[0]
+        name = str(decl.get("name", "") or "")
+        kind = str(decl.get("kind", "") or "")
+        try:
+            start_char = int(decl.get("start_char", -1))
+        except (TypeError, ValueError):
+            start_char = -1
+        try:
+            end_char = int(decl.get("end_char", -1))
+        except (TypeError, ValueError):
+            end_char = -1
         if name:
+            raw_line = int(decl.get("line", 1) or 1)
+            line_map_arg = None if bool(decl.get("source_mapped")) else line_map
             out.append(
                 DefinitionRecord(
                     name=name,
                     path=path,
-                    line=min(max(1, int(line or 1)), line_count),
-                    kind="property",
-                )
-            )
-    for text, line in zip(iad2.get("ct", []), iad2.get("cl", [])):
-        rest = str(text or "").lstrip(" \t")
-        if not rest:
-            continue
-        name = re.split(r"[\s(:]+", rest, 1)[0]
-        if name:
-            out.append(
-                DefinitionRecord(
-                    name=name,
-                    path=path,
-                    line=min(max(1, int(line or 1)), line_count),
-                    kind="command",
+                    line=_mapped_inc_line(raw_line, source_text, line_map_arg),
+                    kind=kind,
+                    directive=str(decl.get("directive", "") or ""),
+                    start_char=start_char,
+                    end_char=end_char,
                 )
             )
     return out
@@ -576,11 +518,12 @@ def _build_project_context(root_dir: str, overlays: dict[str, str]) -> ProjectCo
     iad = build_empty_ia_data(new_replace_tree())
     defs: dict[str, list[DefinitionRecord]] = {}
     inc_paths = _sorted_dir_paths(root, overlays, ".inc")
-    passes: list[tuple[str, dict[str, Any]]] = []
+    passes: list[tuple[str, str, dict[str, Any]]] = []
+    inc_iad2_by_path: dict[str, dict[str, Any]] = {}
     for inc_path in inc_paths:
         text = _read_text(inc_path, overlays)
         iad2 = {"pt": [], "pl": [], "ct": [], "cl": []}
-        ia = IncAnalyzer(text, C.FM_GLOBAL, iad, iad2)
+        ia = IncAnalyzer(text, C.FM_GLOBAL, iad, iad2, sidecar=True)
         if not ia.step1():
             return ProjectContext(
                 iad=None,
@@ -592,13 +535,13 @@ def _build_project_context(root_dir: str, overlays: dict[str, str]) -> ProjectCo
                     code="INC_STEP1",
                 ),
             )
-        for record in _extract_inc_symbol_lines(inc_path, ia.t, text):
+        for record in _extract_iad2_definition_records(inc_path, text, iad2):
+            if record.kind not in ("macro", "define", "replace"):
+                continue
             _append_definition(defs, record)
-        for record in _extract_inc_decl_records(inc_path, text, iad2):
-            _append_definition(defs, record)
-        passes.append((inc_path, iad2))
-    for inc_path, iad2 in passes:
-        ia = IncAnalyzer("", C.FM_GLOBAL, iad, iad2)
+        passes.append((inc_path, text, iad2))
+    for inc_path, text, iad2 in passes:
+        ia = IncAnalyzer("", C.FM_GLOBAL, iad, iad2, sidecar=True)
         if not ia.step2():
             return ProjectContext(
                 iad=None,
@@ -610,11 +553,17 @@ def _build_project_context(root_dir: str, overlays: dict[str, str]) -> ProjectCo
                     code="INC_STEP2",
                 ),
             )
+        for record in _extract_iad2_definition_records(inc_path, text, iad2):
+            if record.kind not in ("property", "command"):
+                continue
+            _append_definition(defs, record)
+        inc_iad2_by_path[os.path.abspath(inc_path)] = iad2
     _enrich_project_definitions(defs, iad)
     return ProjectContext(
         iad=iad,
         definitions=defs,
         build_error=None,
+        inc_iad2_by_path=inc_iad2_by_path,
     )
 
 
@@ -702,6 +651,36 @@ def _line_text_at(text: str, line: int) -> str:
     return lines[line]
 
 
+def _source_token_matches_text(source_text: str, token: SourceToken) -> bool:
+    line_text = _line_text_at(source_text, token.line)
+    if token.start_char < 0 or token.end_char > len(line_text):
+        return False
+    if token.end_char <= token.start_char:
+        return False
+    return (
+        line_text[token.start_char : token.end_char].casefold() == token.text.casefold()
+    )
+
+
+def _source_token_from_replace_use(item: dict[str, Any]) -> SourceToken | None:
+    try:
+        line = int(item.get("line", 1) or 1) - 1
+        start_char = int(item.get("start_char", 0) or 0)
+        end_char = int(item.get("end_char", start_char) or start_char)
+    except (TypeError, ValueError):
+        return None
+    name = str(item.get("name", "") or "")
+    if line < 0 or not name or end_char <= start_char:
+        return None
+    return SourceToken(
+        text=name,
+        line=line,
+        start_char=start_char,
+        end_char=end_char,
+        kind="ident",
+    )
+
+
 def _line_range(
     text: str, line_no: int, position_encoding: str = POSITION_ENCODING_UTF16
 ) -> dict[str, Any]:
@@ -753,6 +732,269 @@ def _unknown_name(lad: dict[str, Any], atom: dict[str, Any]) -> str:
     return ""
 
 
+def _source_token_from_atom(
+    lad: dict[str, Any] | None,
+    atom: dict[str, Any],
+    name: str,
+    kind: str,
+) -> SourceToken | None:
+    if not isinstance(lad, dict) or not isinstance(atom, dict):
+        return None
+    spans = lad.get("atom_span_list")
+    if not isinstance(spans, list):
+        return None
+    try:
+        atom_id = int(atom.get("id", -1))
+    except (TypeError, ValueError):
+        atom_id = -1
+    if atom_id < 0 or atom_id >= len(spans):
+        return None
+    span = spans[atom_id]
+    if not isinstance(span, dict):
+        return None
+    try:
+        line = int(span.get("line", 1) or 1) - 1
+        start_char = int(span.get("start_char", 0) or 0)
+        end_char = int(span.get("end_char", start_char) or start_char)
+    except (TypeError, ValueError):
+        return None
+    if line < 0 or end_char <= start_char:
+        return None
+    return SourceToken(
+        text=name,
+        line=line,
+        start_char=start_char,
+        end_char=end_char,
+        kind=kind,
+    )
+
+
+def _source_token_from_source_map(
+    text: str,
+    source_map: list[Any],
+    name: str,
+    start: int,
+    end: int,
+    kind: str,
+) -> SourceToken | None:
+    if end <= start:
+        return None
+    points = []
+    if isinstance(source_map, list):
+        points = [
+            source_map[pos]
+            for pos in range(start, min(end, len(source_map)))
+            if source_map[pos] is not None
+        ]
+    if points:
+        try:
+            lines = {int(point[0]) for point in points}
+            if len(lines) == 1:
+                chars = [int(point[1]) for point in points]
+                return SourceToken(
+                    text=name,
+                    line=next(iter(lines)) - 1,
+                    start_char=min(chars),
+                    end_char=max(chars) + 1,
+                    kind=kind,
+                )
+        except (TypeError, ValueError, IndexError):
+            pass
+    line = text.count("\n", 0, start)
+    line_start = text.rfind("\n", 0, start) + 1
+    return SourceToken(
+        text=name,
+        line=line,
+        start_char=max(0, start - line_start),
+        end_char=max(0, end - line_start),
+        kind=kind,
+    )
+
+
+def _range_overlaps(
+    used_ranges: set[tuple[int, int, int]], rng: tuple[int, int, int]
+) -> bool:
+    line, start_char, end_char = rng
+    for used_line, used_start, used_end in used_ranges:
+        if used_line != line:
+            continue
+        if start_char < used_end and end_char > used_start:
+            return True
+    return False
+
+
+def _definition_from_maps(
+    maps: Iterable[dict[str, list[DefinitionRecord]]],
+    key: str,
+    kinds: tuple[str, ...],
+) -> DefinitionRecord | None:
+    for mapping in maps:
+        for record in mapping.get(key, []):
+            if record.kind in kinds:
+                return record
+    return None
+
+
+def _global_property_definition_from_maps(
+    maps: Iterable[dict[str, list[DefinitionRecord]]],
+    key: str,
+) -> DefinitionRecord | None:
+    for mapping in maps:
+        for record in mapping.get(key, []):
+            if record.kind != "property":
+                continue
+            if record.scope.casefold().startswith("command "):
+                continue
+            return record
+    return None
+
+
+def _append_occurrence_from_definition(
+    out: list[SymbolOccurrence],
+    result: AnalysisResult,
+    token: SourceToken | None,
+    record: DefinitionRecord | None,
+    used_ranges: set[tuple[int, int, int]],
+) -> bool:
+    if token is None or record is None:
+        return False
+    if not _source_token_matches_text(result.text, token):
+        return False
+    symbol_id = _definition_symbol_id(record)
+    if not symbol_id:
+        return False
+    rng = (token.line, token.start_char, token.end_char)
+    if _range_overlaps(used_ranges, rng):
+        return False
+    if record.kind == "command":
+        kind = "command"
+        semantic_type = "function"
+    elif record.kind == "property":
+        kind = "property"
+        semantic_type = "variable"
+    elif record.kind in ("macro", "define", "replace"):
+        kind = "macro"
+        semantic_type = "macro"
+    else:
+        return False
+    used_ranges.add(rng)
+    out.append(
+        SymbolOccurrence(
+            symbol_id=symbol_id,
+            path=result.path,
+            line=token.line,
+            start_char=token.start_char,
+            end_char=token.end_char,
+            kind=kind,
+            semantic_type=semantic_type,
+            name=token.text,
+            definition=False,
+            renamable=_definition_renamable(record),
+        )
+    )
+    return True
+
+
+def _compiler_source_tokens(result: AnalysisResult) -> list[SourceToken]:
+    lad = result.lad
+    if not isinstance(lad, dict):
+        return []
+    spans = lad.get("atom_span_list")
+    atoms = lad.get("atom_list")
+    if not isinstance(spans, list) or not isinstance(atoms, list):
+        return []
+    keyword_types = {
+        C.LA_T[name]
+        for name in (
+            "COMMAND",
+            "PROPERTY",
+            "GOTO",
+            "GOSUB",
+            "GOSUBSTR",
+            "RETURN",
+            "IF",
+            "ELSEIF",
+            "ELSE",
+            "FOR",
+            "WHILE",
+            "CONTINUE",
+            "BREAK",
+            "SWITCH",
+            "CASE",
+            "DEFAULT",
+        )
+        if name in C.LA_T
+    }
+    label_types = {C.LA_T[name] for name in ("LABEL", "Z_LABEL") if name in C.LA_T}
+    out: list[SourceToken] = []
+    for index, span in enumerate(spans):
+        if not isinstance(span, dict):
+            continue
+        atom = (
+            atoms[index]
+            if index < len(atoms) and isinstance(atoms[index], dict)
+            else {}
+        )
+        try:
+            atom_type = int(atom.get("type", C.LA_T["NONE"]) or C.LA_T["NONE"])
+            line = int(span.get("line", 1) or 1) - 1
+            start_char = int(span.get("start_char", 0) or 0)
+            end_char = int(span.get("end_char", start_char) or start_char)
+        except (TypeError, ValueError):
+            continue
+        text = str(span.get("text", "") or "")
+        if line < 0 or not text or end_char <= start_char:
+            continue
+        token = SourceToken(
+            text=text,
+            line=line,
+            start_char=start_char,
+            end_char=end_char,
+            kind="",
+        )
+        if not _source_token_matches_text(result.text, token):
+            continue
+        key = text.casefold()
+        if atom_type in label_types:
+            kind = "label"
+        elif atom_type in keyword_types or key in KEYWORD_DOCS:
+            kind = "keyword"
+        elif key in FORM_DOCS:
+            kind = "type"
+        elif atom_type == C.LA_T.get("UNKNOWN"):
+            kind = "ident"
+        else:
+            continue
+        token.kind = kind
+        out.append(token)
+    return out
+
+
+def _compiler_token_at_position(
+    result: AnalysisResult,
+    line: int,
+    character: int,
+    position_encoding: str = POSITION_ENCODING_UTF16,
+) -> SourceToken | None:
+    character = _lsp_character_to_char(
+        _line_text_at(result.text, line), character, position_encoding
+    )
+    for item in result.replace_uses:
+        token = _source_token_from_replace_use(item)
+        if token is None:
+            continue
+        if not _source_token_matches_text(result.text, token):
+            continue
+        if token.line == line and token.start_char <= character <= token.end_char:
+            return None
+    for token in _compiler_source_tokens(result):
+        if token.line != line:
+            continue
+        if token.start_char <= character <= token.end_char:
+            return token
+    return None
+
+
 def _collect_scene_symbols(
     lad: dict[str, Any] | None,
     sad: dict[str, Any] | None,
@@ -772,6 +1014,16 @@ def _collect_scene_symbols(
     def add_local(record: DefinitionRecord) -> None:
         _append_definition(local_defs, record)
         doc_symbols.append(record)
+
+    def span_record(
+        record: DefinitionRecord, atom: dict[str, Any], name: str
+    ) -> DefinitionRecord:
+        token = _source_token_from_atom(lad, atom, name, "ident")
+        if token is not None:
+            record.line = token.line + 1
+            record.start_char = token.start_char
+            record.end_char = token.end_char
+        return record
 
     def walk_sentence(sentence: dict[str, Any], current_command: str = "") -> None:
         if not isinstance(sentence, dict):
@@ -794,6 +1046,7 @@ def _collect_scene_symbols(
                 kind="label",
                 detail="normal label",
             )
+            rec = span_record(rec, atom, name)
             label_defs[name.casefold()] = rec
             doc_symbols.append(rec)
             return
@@ -815,6 +1068,7 @@ def _collect_scene_symbols(
                 kind="z_label",
                 detail="z label",
             )
+            rec = span_record(rec, atom, name)
             z_label_defs[name.casefold()] = rec
             doc_symbols.append(rec)
             return
@@ -843,6 +1097,7 @@ def _collect_scene_symbols(
                 signature=f"{name}{_render_arg_list(args)} -> {form}",
                 scope=C.FM_SCENE,
             )
+            rec = span_record(rec, name_atom, name)
             add_local(rec)
             for item in prop_list:
                 pname_atom = (item.get("name") or {}).get("atom") or {}
@@ -855,6 +1110,7 @@ def _collect_scene_symbols(
                     detail=f"property {pname}: {_format_form(item.get('form_code', C.FM_INT))}",
                     scope=f"command {name}",
                 )
+                prec = span_record(prec, pname_atom, pname)
                 add_local(prec)
             block = (node.get("block") or {}).get("sentense_list") or []
             for sub in block:
@@ -865,16 +1121,15 @@ def _collect_scene_symbols(
             name_atom = (node.get("name") or {}).get("atom") or {}
             name = _unknown_name(lad, name_atom)
             scope = f"command {current_command}" if current_command else "scene"
-            add_local(
-                DefinitionRecord(
-                    name=name,
-                    path="",
-                    line=max(1, int(name_atom.get("line", 1) or 1)),
-                    kind="property",
-                    detail=f"property {name}: {_format_form(node.get('form_code', C.FM_INT))}",
-                    scope=scope,
-                )
+            rec = DefinitionRecord(
+                name=name,
+                path="",
+                line=max(1, int(name_atom.get("line", 1) or 1)),
+                kind="property",
+                detail=f"property {name}: {_format_form(node.get('form_code', C.FM_INT))}",
+                scope=scope,
             )
+            add_local(span_record(rec, name_atom, name))
             return
 
         def walk_block(items: Any, cmd_name: str = current_command) -> None:
@@ -922,7 +1177,7 @@ def _format_unknown_element_message(last: dict[str, Any]) -> str:
 
 
 def _analyze_ss_document(
-    abs_path: str, text: str, project: ProjectContext
+    abs_path: str, text: str, project: ProjectContext, *, run_bs: bool = True
 ) -> AnalysisResult:
     result = AnalysisResult(path=abs_path, text=text, project=project)
     base_iad = (
@@ -932,7 +1187,7 @@ def _analyze_ss_document(
     )
     iad = copy_ia_data(base_iad)
     pcad: dict[str, Any] = {}
-    ca = CharacterAnalizer()
+    ca = CharacterAnalizer(sidecar=True)
     if not ca.analize_file(text, iad, pcad):
         result.diagnostics.append(
             SourceDiagnostic(
@@ -944,6 +1199,12 @@ def _analyze_ss_document(
         )
         return result
     result.replace_tree = iad.get("replace_tree") if isinstance(iad, dict) else None
+    result.inc_iad2 = (
+        pcad.get("inc_iad2") if isinstance(pcad.get("inc_iad2"), dict) else None
+    )
+    result.replace_uses = [
+        item for item in pcad.get("replace_uses", []) if isinstance(item, dict)
+    ]
     lad, err = la_analize(pcad)
     if err:
         result.diagnostics.append(
@@ -985,23 +1246,25 @@ def _analyze_ss_document(
         )
         return result
     result.sad = sad
-    bs = BS()
-    bsd: dict[str, Any] = {}
-    if not bs.compile(iad, lad, mad, bsd):
-        result.diagnostics.append(
-            SourceDiagnostic(
-                path=abs_path,
-                line=max(1, int(bs.get_error_line() or 1)),
-                message=str(bs.get_error_code() or "UNK_ERROR"),
-                code="BS",
+    result.mad = mad
+    if run_bs:
+        bs = BS()
+        bsd: dict[str, Any] = {}
+        if not bs.compile(iad, lad, mad, bsd):
+            result.diagnostics.append(
+                SourceDiagnostic(
+                    path=abs_path,
+                    line=max(1, int(bs.get_error_line() or 1)),
+                    message=str(bs.get_error_code() or "UNK_ERROR"),
+                    code="BS",
+                )
             )
-        )
-        return result
+            return result
     local_defs, label_defs, z_label_defs, doc_symbols = _collect_scene_symbols(lad, sad)
-    for item in _extract_inc_symbol_lines(
+    for item in _extract_iad2_definition_records(
         abs_path,
-        pcad.get("inc_text", ""),
         text,
+        pcad.get("inc_iad2", {}),
         pcad.get("inc_line_map"),
     ):
         item.scope = "scene-local"
@@ -1027,6 +1290,7 @@ def analyze_document(
     text: str,
     overlays: dict[str, str] | None = None,
     project: ProjectContext | None = None,
+    run_bs: bool = True,
 ) -> AnalysisResult:
     overlays = {
         os.path.abspath(k): _normalize_source_text(v)
@@ -1067,7 +1331,7 @@ def analyze_document(
                 if _path_identity(item.path) == _path_identity(abs_path):
                     result.document_symbols.append(item)
         return result
-    result = _analyze_ss_document(abs_path, text, project)
+    result = _analyze_ss_document(abs_path, text, project, run_bs=run_bs)
     return result
 
 
@@ -1097,7 +1361,7 @@ def _command_records(result: AnalysisResult) -> list[DefinitionRecord]:
         rec
         for bucket in result.local_definitions.values()
         for rec in bucket
-        if rec.kind == "command"
+        if rec.kind == "command" and rec.scope == C.FM_SCENE
     ]
 
 
@@ -1117,7 +1381,7 @@ def _link_scan_worker(
 ) -> tuple[bool, list[DefinitionRecord], list[SymbolOccurrence]]:
     return _link_scan_result(
         _silent_stdout_call(
-            analyze_document, path, text, project=_scan_worker_project()
+            analyze_document, path, text, project=_scan_worker_project(), run_bs=False
         )
     )
 
@@ -1205,8 +1469,31 @@ def word_at_position(
     return "", None, ""
 
 
-def _is_hash_name_char(ch: str) -> bool:
-    return ch == "_" or is_alpha(ch) or is_num(ch)
+def _definition_range(
+    text: str,
+    record: DefinitionRecord,
+    position_encoding: str = POSITION_ENCODING_UTF16,
+) -> dict[str, Any]:
+    try:
+        line = int(record.line or 1) - 1
+        start_char = int(record.start_char)
+        end_char = int(record.end_char)
+    except (TypeError, ValueError):
+        return _line_range(text, record.line, position_encoding)
+    if (
+        line >= 0
+        and line < len(text.split("\n"))
+        and start_char >= 0
+        and end_char > start_char
+    ):
+        return _range(
+            line,
+            start_char,
+            end_char,
+            _line_text_at(text, line),
+            position_encoding,
+        )
+    return _line_range(text, record.line, position_encoding)
 
 
 def _is_ident_start(ch: str) -> bool:
@@ -1215,136 +1502,6 @@ def _is_ident_start(ch: str) -> bool:
 
 def _is_ident_char(ch: str) -> bool:
     return _is_ident_start(ch) or is_num(ch) or is_zen(ch)
-
-
-def _is_source_word_char(ch: str) -> bool:
-    return (
-        ch in "_$@"
-        or is_alpha(ch)
-        or is_num(ch)
-        or (is_zen(ch) and ch not in "\u3010\u3011\u300c\u300d\u300e\u300f\"'")
-    )
-
-
-def _replace_symbol_span(
-    line_text: str,
-    start_char: int,
-    replace_tree: dict[str, Any] | None,
-) -> tuple[int, int] | None:
-    if start_char > 0 and _is_source_word_char(line_text[start_char - 1]):
-        return None
-    if not isinstance(replace_tree, dict):
-        return None
-    rep = search_replace_tree(replace_tree, line_text, start_char)
-    if not isinstance(rep, dict):
-        return None
-    name = str(rep.get("name") or "")
-    if not name:
-        return None
-    end_char = start_char + len(name)
-    if end_char > len(line_text):
-        return None
-    return start_char, end_char
-
-
-def _scan_source_tokens(
-    text: str,
-    replace_tree: dict[str, Any] | None = None,
-) -> list[SourceToken]:
-    out: list[SourceToken] = []
-    in_block_comment = False
-    for line_no, line in enumerate(text.split("\n")):
-        i = 0
-        in_single = False
-        in_double = False
-        while i < len(line):
-            if in_block_comment:
-                end = line.find("*/", i)
-                if end < 0:
-                    i = len(line)
-                    continue
-                in_block_comment = False
-                i = end + 2
-                continue
-            if in_single:
-                if line[i] == "\\" and i + 1 < len(line):
-                    i += 2
-                elif line[i] == "'":
-                    in_single = False
-                    i += 1
-                else:
-                    i += 1
-                continue
-            if in_double:
-                if line[i] == "\\" and i + 1 < len(line):
-                    i += 2
-                elif line[i] == '"':
-                    in_double = False
-                    i += 1
-                else:
-                    i += 1
-                continue
-            if line.startswith("//", i) or line[i] == ";":
-                break
-            if line.startswith("/*", i):
-                in_block_comment = True
-                i += 2
-                continue
-            if line[i] == "'":
-                in_single = True
-                i += 1
-                continue
-            if line[i] == '"':
-                in_double = True
-                i += 1
-                continue
-            if line[i] == "#":
-                j = i + 1
-                while j < len(line) and _is_hash_name_char(line[j]):
-                    j += 1
-                if j > i + 1:
-                    out.append(
-                        SourceToken(
-                            text=line[i:j],
-                            line=line_no,
-                            start_char=i,
-                            end_char=j,
-                            kind="hash",
-                        )
-                    )
-                i = j
-                continue
-            replace_span = _replace_symbol_span(line, i, replace_tree)
-            if replace_span is not None:
-                start_char, end_char = replace_span
-                out.append(
-                    SourceToken(
-                        text=line[start_char:end_char],
-                        line=line_no,
-                        start_char=start_char,
-                        end_char=end_char,
-                        kind="ident",
-                    )
-                )
-                i = end_char
-                continue
-            if _is_ident_start(line[i]):
-                j = i + 1
-                while j < len(line) and _is_ident_char(line[j]):
-                    j += 1
-                out.append(
-                    SourceToken(
-                        text=line[i:j],
-                        line=line_no,
-                        start_char=i,
-                        end_char=j,
-                        kind="ident",
-                    )
-                )
-                i = j
-                continue
-            i += 1
-    return out
 
 
 def _command_symbol_id(name: str) -> str:
@@ -1372,6 +1529,10 @@ def _local_macro_symbol_id(kind: str, path: str, name: str) -> str:
         + ":"
         + str(name).casefold()
     )
+
+
+def _label_symbol_id(name: str) -> str:
+    return "label:" + str(name).casefold()
 
 
 def _is_plain_identifier(name: str) -> bool:
@@ -1438,7 +1599,7 @@ def _builtin_kind_defined(key: str, kind: str) -> bool:
 
 def _append_definition_location(
     locations: list[dict[str, Any]],
-    seen: set[tuple[str, int]],
+    seen: set[tuple[str, int, int, int]],
     record: DefinitionRecord,
     fallback_path: str,
     current_path: str = "",
@@ -1448,7 +1609,7 @@ def _append_definition_location(
     uri_for_path: Any = None,
 ) -> None:
     path = os.path.abspath(record.path or fallback_path)
-    marker = (path, record.line)
+    marker = (path, int(record.line or 1), int(record.start_char), int(record.end_char))
     if marker in seen:
         return
     seen.add(marker)
@@ -1460,28 +1621,14 @@ def _append_definition_location(
     locations.append(
         {
             "uri": uri_for_path(path) if callable(uri_for_path) else path_to_uri(path),
-            "range": _line_range(text, record.line, position_encoding),
+            "range": _definition_range(text, record, position_encoding),
         }
     )
 
 
 def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
-    replace_tree = result.replace_tree
-    if not isinstance(replace_tree, dict):
-        replace_tree = (
-            result.project.iad.get("replace_tree")
-            if isinstance(result.project.iad, dict)
-            else None
-        )
-    ident_tokens = [
-        token
-        for token in _scan_source_tokens(result.text, replace_tree=replace_tree)
-        if token.kind == "ident"
-    ]
-    line_tokens: dict[int, list[SourceToken]] = {}
-    for token in ident_tokens:
-        line_tokens.setdefault(token.line, []).append(token)
-    requests: list[tuple[int, int, str, str, str, str, bool, bool]] = []
+    seen_ranges: set[tuple[int, int, int]] = set()
+    out: list[SymbolOccurrence] = []
     local_command_keys = {
         key
         for key, records in result.local_definitions.items()
@@ -1525,6 +1672,37 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
         for record in records
         if record.kind == "property"
     }
+    local_macro_defs = _unique_macro_definitions(result.local_definitions)
+    macro_defs = _unique_macro_definitions(result.project.definitions)
+    replace_tokens = []
+    for item in result.replace_uses:
+        token = _source_token_from_replace_use(item)
+        if token is None:
+            continue
+        replace_tokens.append(token)
+    _append_macro_use_occurrences(
+        out,
+        result,
+        replace_tokens,
+        seen_ranges,
+        (local_macro_defs, macro_defs),
+        mark_used_ranges=True,
+    )
+    used_ranges_by_line: dict[int, list[tuple[int, int]]] = {}
+    for line, start_char, end_char in seen_ranges:
+        used_ranges_by_line.setdefault(line, []).append((start_char, end_char))
+
+    def range_used(rng: tuple[int, int, int]) -> bool:
+        line, start_char, end_char = rng
+        for used_start, used_end in used_ranges_by_line.get(line, []):
+            if start_char < used_end and end_char > used_start:
+                return True
+        return False
+
+    def mark_range(rng: tuple[int, int, int]) -> None:
+        line, start_char, end_char = rng
+        seen_ranges.add(rng)
+        used_ranges_by_line.setdefault(line, []).append((start_char, end_char))
 
     def add_request(
         atom: dict[str, Any],
@@ -1534,21 +1712,33 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
         semantic_type: str,
         definition: bool,
         renamable: bool,
-    ) -> None:
+    ) -> bool:
         if not isinstance(atom, dict) or not name or not symbol_id:
-            return
-        requests.append(
-            (
-                int(atom.get("id", -1) or -1),
-                max(0, int(atom.get("line", 1) or 1) - 1),
-                name,
-                symbol_id,
-                kind,
-                semantic_type,
-                definition,
-                renamable,
+            return False
+        token = _source_token_from_atom(result.lad, atom, name, "ident")
+        if token is None:
+            return False
+        if not _source_token_matches_text(result.text, token):
+            return False
+        rng = (token.line, token.start_char, token.end_char)
+        if range_used(rng):
+            return False
+        mark_range(rng)
+        out.append(
+            SymbolOccurrence(
+                symbol_id=symbol_id,
+                path=result.path,
+                line=token.line,
+                start_char=token.start_char,
+                end_char=token.end_char,
+                kind=kind,
+                semantic_type=semantic_type,
+                name=token.text,
+                definition=definition,
+                renamable=renamable,
             )
         )
+        return True
 
     def walk(node: Any, current_command: str = "") -> None:
         if isinstance(node, list):
@@ -1558,6 +1748,67 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
         if not isinstance(node, dict):
             return
         nt = int(node.get("node_type", 0) or 0)
+        if nt == C.NT_S_LABEL and "label" in node:
+            inner = node.get("label")
+            atom = (inner.get("label") or inner).get("atom") if inner else {}
+            if isinstance(atom, dict) and atom:
+                name = _scene_name_from_label_atom(result.lad, atom)
+                add_request(
+                    atom,
+                    name,
+                    _label_symbol_id(name),
+                    "label",
+                    "variable",
+                    True,
+                    False,
+                )
+            return
+        if nt == C.NT_S_Z_LABEL and "z_label" in node:
+            inner = node.get("z_label")
+            atom = (inner.get("z_label") or inner).get("atom") if inner else {}
+            if isinstance(atom, dict) and atom:
+                name = f"#z{_atom_opt_int(atom, 0)}"
+                add_request(
+                    atom,
+                    name,
+                    _label_symbol_id(name),
+                    "z_label",
+                    "variable",
+                    True,
+                    False,
+                )
+            return
+        if nt == C.NT_S_GOTO:
+            inner = node.get("Goto") or {}
+            label_atom = (inner.get("label") or {}).get("atom") or {}
+            if label_atom:
+                name = _scene_name_from_label_atom(result.lad, label_atom)
+                add_request(
+                    label_atom,
+                    name,
+                    _label_symbol_id(name),
+                    "label",
+                    "variable",
+                    False,
+                    False,
+                )
+            z_atom = (inner.get("z_label") or {}).get("atom") or {}
+            if z_atom:
+                name = f"#z{_atom_opt_int(z_atom, 0)}"
+                add_request(
+                    z_atom,
+                    name,
+                    _label_symbol_id(name),
+                    "z_label",
+                    "variable",
+                    False,
+                    False,
+                )
+            walk(inner.get("arg_list"), current_command)
+            return
+        if nt == C.NT_S_RETURN:
+            walk((node.get("Return") or {}).get("exp"), current_command)
+            return
         if nt == C.NT_S_DEF_CMD:
             inner = node.get("def_cmd") or {}
             name_atom = (inner.get("name") or {}).get("atom") or {}
@@ -1607,6 +1858,75 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
                 renamable,
             )
             walk(inner.get("form"), current_command)
+            return
+        if nt == C.NT_S_COMMAND:
+            walk((node.get("command") or {}).get("command"), current_command)
+            return
+        if nt == C.NT_S_ASSIGN:
+            inner = node.get("assign") or {}
+            walk(inner.get("left"), current_command)
+            walk(inner.get("right"), current_command)
+            return
+        if nt == C.NT_S_IF:
+            for item in (node.get("If") or {}).get("sub") or []:
+                walk(item.get("cond"), current_command)
+                walk(item.get("block"), current_command)
+            return
+        if nt == C.NT_S_FOR:
+            inner = node.get("For") or {}
+            walk(inner.get("init"), current_command)
+            walk(inner.get("cond"), current_command)
+            walk(inner.get("loop"), current_command)
+            walk(inner.get("block"), current_command)
+            return
+        if nt == C.NT_S_WHILE:
+            inner = node.get("While") or {}
+            walk(inner.get("cond"), current_command)
+            walk(inner.get("block"), current_command)
+            return
+        if nt == C.NT_S_SWITCH:
+            inner = node.get("Switch") or {}
+            walk(inner.get("cond"), current_command)
+            for item in inner.get("case") or []:
+                walk(item.get("value"), current_command)
+                walk(item.get("block"), current_command)
+            walk((inner.get("Default") or {}).get("block"), current_command)
+            return
+        if nt in (C.NT_S_NAME, C.NT_S_TEXT, C.NT_S_EOF, C.NT_S_CONTINUE, C.NT_S_BREAK):
+            return
+        if nt in (C.NT_EXP_SIMPLE, C.NT_EXP_OPR1, C.NT_EXP_OPR2):
+            walk(node.get("smp_exp"), current_command)
+            walk(node.get("exp_1"), current_command)
+            walk(node.get("exp_2"), current_command)
+            return
+        if nt == C.NT_SMP_KAKKO:
+            walk(node.get("exp"), current_command)
+            return
+        if nt == C.NT_SMP_EXP_LIST:
+            walk(node.get("exp_list"), current_command)
+            return
+        if nt == C.NT_SMP_GOTO:
+            walk(node.get("Goto"), current_command)
+            return
+        if nt == C.NT_SMP_LITERAL:
+            return
+        if nt == C.NT_SMP_ELM_EXP:
+            walk(node.get("elm_exp"), current_command)
+            return
+        if "sentense_list" in node:
+            walk(node.get("sentense_list"), current_command)
+            return
+        if "block" in node and isinstance(node.get("block"), list):
+            walk(node.get("block"), current_command)
+            return
+        if "exp" in node and isinstance(node.get("exp"), list):
+            walk(node.get("exp"), current_command)
+            return
+        if "elm_list" in node:
+            walk(node.get("elm_list"), current_command)
+            return
+        if "element" in node:
+            walk(node.get("element"), current_command)
             return
         if nt == C.NT_ELM_ELEMENT:
             name_atom = (node.get("name") or {}).get("atom") or {}
@@ -1661,69 +1981,17 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
                     )
             walk(node.get("arg_list"), current_command)
             return
-        if nt == C.NT_ARG_WITH_NAME:
+        if nt == C.NT_ELM_ARRAY:
             walk(node.get("exp"), current_command)
             return
-        for value in node.values():
-            if isinstance(value, (dict, list)):
-                walk(value, current_command)
+        if nt in (C.NT_ARG_WITH_NAME, C.NT_ARG_NO_NAME):
+            walk(node.get("exp"), current_command)
+            return
+        if "arg" in node:
+            walk(node.get("arg"), current_command)
 
-    seen_ranges: set[tuple[int, int, int]] = set()
-    out: list[SymbolOccurrence] = []
     if isinstance(result.lad, dict) and isinstance(result.sad, dict):
         walk((result.sad.get("root") or {}).get("sentense_list") or [])
-        requests.sort(key=lambda item: (item[0], item[1], item[2].casefold()))
-        line_cursors: dict[int, int] = {}
-        for (
-            _,
-            line,
-            name,
-            symbol_id,
-            kind,
-            semantic_type,
-            definition,
-            renamable,
-        ) in requests:
-            tokens = line_tokens.get(line, [])
-            start_index = line_cursors.get(line, 0)
-            match_index = -1
-            for index in range(start_index, len(tokens)):
-                token = tokens[index]
-                if token.text.casefold() != name.casefold():
-                    continue
-                rng = (token.line, token.start_char, token.end_char)
-                if rng in seen_ranges:
-                    continue
-                match_index = index
-                break
-            if match_index < 0:
-                for index, token in enumerate(tokens):
-                    if token.text.casefold() != name.casefold():
-                        continue
-                    rng = (token.line, token.start_char, token.end_char)
-                    if rng in seen_ranges:
-                        continue
-                    match_index = index
-                    break
-            if match_index < 0:
-                continue
-            token = tokens[match_index]
-            seen_ranges.add((token.line, token.start_char, token.end_char))
-            line_cursors[line] = max(start_index, match_index + 1)
-            out.append(
-                SymbolOccurrence(
-                    symbol_id=symbol_id,
-                    path=result.path,
-                    line=token.line,
-                    start_char=token.start_char,
-                    end_char=token.end_char,
-                    kind=kind,
-                    semantic_type=semantic_type,
-                    name=token.text,
-                    definition=definition,
-                    renamable=renamable,
-                )
-            )
     scene_local_macro_defs = [
         record
         for records in result.local_definitions.values()
@@ -1739,14 +2007,16 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
         )
     )
     for record in scene_local_macro_defs:
-        span = _macro_definition_span_in_text(result.text, record)
-        if span is None:
+        start_char = int(record.start_char)
+        end_char = int(record.end_char)
+        if start_char < 0 or end_char <= start_char:
             continue
-        line, start_char, end_char, name = span
+        line = max(0, int(record.line or 1) - 1)
+        name = record.name
         rng = (line, start_char, end_char)
         if rng in seen_ranges:
             continue
-        seen_ranges.add(rng)
+        mark_range(rng)
         out.append(
             SymbolOccurrence(
                 symbol_id=_definition_symbol_id(record),
@@ -1761,79 +2031,11 @@ def _collect_ss_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
                 renamable=_definition_renamable(record),
             )
         )
-    local_macro_defs = _unique_macro_definitions(result.local_definitions)
-    macro_defs = _unique_macro_definitions(result.project.definitions)
-    _append_macro_use_occurrences(
-        out,
-        result,
-        ident_tokens,
-        seen_ranges,
-        (local_macro_defs, macro_defs),
-        mark_used_ranges=True,
-    )
+    _append_iad2_body_occurrences(out, result, result.inc_iad2, seen_ranges)
     out.sort(
         key=lambda item: (item.line, item.start_char, item.end_char, item.symbol_id)
     )
     return out
-
-
-def _directive_name_span(
-    line_text: str,
-    directive: str,
-    stop_chars: set[str],
-    trim_trailing_spaces: bool = False,
-) -> tuple[int, int, str] | None:
-    offset = len(line_text) - len(line_text.lstrip(" \t"))
-    if not line_text[offset:].casefold().startswith(directive):
-        return None
-    start = offset + len(directive)
-    while start < len(line_text) and line_text[start] in " \t":
-        start += 1
-    end = start
-    while end < len(line_text) and line_text[end] not in stop_chars:
-        end += 1
-    if trim_trailing_spaces:
-        while end > start and line_text[end - 1] == " ":
-            end -= 1
-    if end <= start:
-        return None
-    return start, end, line_text[start:end]
-
-
-def _macro_definition_span_in_text(
-    text: str,
-    record: DefinitionRecord,
-) -> tuple[int, int, int, str] | None:
-    line_index = max(0, int(record.line or 1) - 1)
-    lines = text.split("\n")
-    if line_index >= len(lines):
-        return None
-    directive = str(record.directive or "")
-    if not directive:
-        if record.kind == "macro":
-            directive = "#macro"
-        elif record.kind == "replace":
-            directive = "#replace"
-        elif record.kind == "define":
-            directive = "#define"
-    for candidate, stop_chars, trim_spaces in (
-        ("#macro", set(" \t("), False),
-        ("#define_s", set("\t"), True),
-        ("#define", set(" \t"), False),
-        ("#replace", set(" \t"), False),
-    ):
-        if directive and candidate != directive:
-            continue
-        span = _directive_name_span(
-            lines[line_index], candidate, stop_chars, trim_spaces
-        )
-        if span is None:
-            continue
-        start_char, end_char, name = span
-        if name.casefold() != record.name.casefold():
-            continue
-        return line_index, start_char, end_char, name
-    return None
 
 
 def _append_macro_use_occurrences(
@@ -1850,6 +2052,8 @@ def _append_macro_use_occurrences(
             continue
         rng = (token.line, token.start_char, token.end_char)
         if rng in used_ranges:
+            continue
+        if not _source_token_matches_text(result.text, token):
             continue
         record = None
         for macro_defs in macro_maps or ():
@@ -1881,28 +2085,127 @@ def _append_macro_use_occurrences(
         )
 
 
+def _append_iad2_body_occurrences(
+    out: list[SymbolOccurrence],
+    result: AnalysisResult,
+    iad2: dict[str, Any] | None,
+    used_ranges: set[tuple[int, int, int]],
+) -> None:
+    if not isinstance(iad2, dict):
+        return
+    bodies = iad2.get("bodies")
+    if not isinstance(bodies, list):
+        return
+    macro_maps = [
+        _unique_macro_definitions(result.local_definitions),
+        _unique_macro_definitions(result.project.definitions),
+    ]
+    definition_maps = (result.local_definitions, result.project.definitions)
+    replace_tree = result.replace_tree
+    if replace_tree is None and isinstance(result.project.iad, dict):
+        maybe_tree = result.project.iad.get("replace_tree")
+        replace_tree = maybe_tree if isinstance(maybe_tree, dict) else None
+    unknown_type = C.LA_T.get("UNKNOWN")
+    for body in bodies:
+        if not isinstance(body, dict):
+            continue
+        text = str(body.get("text", "") or "")
+        if not text:
+            continue
+        source_map = body.get("source_map")
+        source_map = source_map if isinstance(source_map, list) else []
+        arg_names = {
+            str(name or "").casefold()
+            for name in (body.get("args") or [])
+            if str(name or "")
+        }
+        if isinstance(replace_tree, dict):
+            i = 0
+            padded = text + "\0"
+            while i < len(text):
+                rep = search_replace_tree(replace_tree, padded, i)
+                if not isinstance(rep, dict):
+                    i += 1
+                    continue
+                name = str(rep.get("name", "") or "")
+                if not name:
+                    i += 1
+                    continue
+                if name.casefold() in arg_names:
+                    i += max(1, len(name))
+                    continue
+                record = None
+                for macro_defs in macro_maps:
+                    record = macro_defs.get(name.casefold())
+                    if record is not None:
+                        break
+                token = _source_token_from_source_map(
+                    text,
+                    source_map,
+                    name,
+                    i,
+                    i + len(name),
+                    "ident",
+                )
+                _append_occurrence_from_definition(
+                    out, result, token, record, used_ranges
+                )
+                i += max(1, len(name))
+        lad, err = la_analize(
+            {"scn_text": text, "scn_source_map": source_map, "sidecar": True}
+        )
+        if err or not isinstance(lad, dict):
+            continue
+        atoms = lad.get("atom_list")
+        if not isinstance(atoms, list):
+            continue
+        for atom in atoms:
+            if not isinstance(atom, dict):
+                continue
+            try:
+                atom_type = int(atom.get("type", C.LA_T["NONE"]) or C.LA_T["NONE"])
+            except (TypeError, ValueError):
+                continue
+            if atom_type != unknown_type:
+                continue
+            name = _unknown_name(lad, atom)
+            key = name.casefold()
+            if not name or key in arg_names:
+                continue
+            token = _source_token_from_atom(lad, atom, name, "ident")
+            record = _definition_from_maps(definition_maps, key, ("command",))
+            if record is None:
+                record = _global_property_definition_from_maps(definition_maps, key)
+            if record is None:
+                for macro_defs in macro_maps:
+                    record = macro_defs.get(key)
+                    if record is not None:
+                        break
+            _append_occurrence_from_definition(out, result, token, record, used_ranges)
+
+
 def _collect_inc_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
     out: list[SymbolOccurrence] = []
     used_ranges: set[tuple[int, int, int]] = set()
-    for line_no, line_text in enumerate(result.text.split("\n")):
-        for directive, kind, semantic_type, stop_chars, trim_spaces in (
-            ("#macro", "macro", "macro", set(" \t("), False),
-            ("#define_s", "define", "macro", set("\t"), True),
-            ("#define", "define", "macro", set(" \t"), False),
-            ("#replace", "replace", "macro", set(" \t"), False),
-            ("#property", "property", "variable", set(" \t:"), False),
-            ("#command", "command", "function", set(" \t(:"), False),
-        ):
-            span = _directive_name_span(line_text, directive, stop_chars, trim_spaces)
-            if span is None:
+    for records in result.project.definitions.values():
+        for record in records:
+            if _path_identity(record.path) != _path_identity(result.path):
                 continue
-            start_char, end_char, name = span
-            if kind == "command":
+            start_char = int(record.start_char)
+            end_char = int(record.end_char)
+            if start_char < 0 or end_char <= start_char:
+                continue
+            line_no = max(0, int(record.line or 1) - 1)
+            name = record.name
+            if record.kind == "command":
                 symbol_id = _command_symbol_id(name)
-            elif kind == "property":
+                semantic_type = "function"
+            elif record.kind == "property":
                 symbol_id = _global_property_symbol_id(name)
+                semantic_type = "variable"
             else:
-                symbol_id = _macro_symbol_id(kind, name)
+                symbol_id = _macro_symbol_id(record.kind, name)
+                semantic_type = "macro"
             out.append(
                 SymbolOccurrence(
                     symbol_id=symbol_id,
@@ -1910,36 +2213,20 @@ def _collect_inc_occurrences(result: AnalysisResult) -> list[SymbolOccurrence]:
                     line=line_no,
                     start_char=start_char,
                     end_char=end_char,
-                    kind=("macro" if kind in ("macro", "define", "replace") else kind),
+                    kind=(
+                        "macro"
+                        if record.kind in ("macro", "define", "replace")
+                        else record.kind
+                    ),
                     semantic_type=semantic_type,
                     name=name,
                     definition=True,
-                    renamable=_definition_renamable(
-                        DefinitionRecord(
-                            name=name,
-                            path=result.path,
-                            line=line_no + 1,
-                            kind=kind,
-                        )
-                    ),
+                    renamable=_definition_renamable(record),
                 )
             )
             used_ranges.add((line_no, start_char, end_char))
-            break
-    replace_tree = (
-        result.project.iad.get("replace_tree")
-        if isinstance(result.project.iad, dict)
-        else None
-    )
-    macro_defs = _unique_macro_definitions(result.project.definitions)
-    _append_macro_use_occurrences(
-        out,
-        result,
-        _scan_source_tokens(result.text, replace_tree=replace_tree),
-        used_ranges,
-        (macro_defs,),
-        mark_used_ranges=False,
-    )
+    iad2 = result.project.inc_iad2_by_path.get(os.path.abspath(result.path))
+    _append_iad2_body_occurrences(out, result, iad2, used_ranges)
     out.sort(
         key=lambda item: (item.line, item.start_char, item.end_char, item.symbol_id)
     )
@@ -1970,39 +2257,37 @@ def _line_start_offsets(text: str) -> list[int]:
     return out
 
 
-def _source_uses_utf8(path: str, text: str) -> bool:
-    from . import textmap as tm
-
-    try:
-        _disk_text, encoding, _newline = tm.read_text(path)
-        return str(encoding or "").lower().startswith("utf-8")
-    except (OSError, ValueError):
-        pass
-    try:
-        text.encode("cp932")
-    except UnicodeEncodeError:
-        return True
-    return False
-
-
 def _collect_ss_string_semantics(result: AnalysisResult) -> list[StringSemanticRange]:
     from . import textmap as tm
 
-    path = result.path
     text = result.text
-    ctx = {
-        "scn_path": os.path.dirname(os.path.abspath(path)) or ".",
-        "utf8": _source_uses_utf8(path, text),
-    }
-    try:
-        with redirect_stdout(io.StringIO()):
-            tokens, iad = tm.collect_tokens(
-                text,
-                ctx,
-                iad_base=tm.BS.build_ia_data(ctx),
-            )
-    except Exception:
+    lad = result.lad
+    mad = result.mad
+    if not isinstance(lad, dict) or not isinstance(mad, dict):
         return []
+    atom_list = list(lad.get("atom_list") or [])
+    spans = lad.get("atom_span_list")
+    if not isinstance(spans, list):
+        return []
+    atom_type_map = {
+        tm._int_value(atom.get("id"), -1): tm._int_value(atom.get("type"), -1)
+        for atom in atom_list
+        if isinstance(atom, dict)
+    }
+    root = mad.get("root")
+    if not isinstance(root, dict):
+        return []
+    marker = object()
+    old_unknown_list = root.get("_unknown_list", marker)
+    root["_unknown_list"] = list(lad.get("unknown_list") or [])
+    try:
+        kind_map = tm._collect_compiled_string_kinds(root, atom_type_map)
+    finally:
+        if old_unknown_list is marker:
+            root.pop("_unknown_list", None)
+        else:
+            root["_unknown_list"] = old_unknown_list
+    str_list = lad.get("str_list") or []
     line_offsets = _line_start_offsets(text)
     out: list[StringSemanticRange] = []
     seen: set[tuple[int, int, int, str]] = set()
@@ -2030,23 +2315,41 @@ def _collect_ss_string_semantics(result: AnalysisResult) -> list[StringSemanticR
             )
         )
 
-    for entry in tm.locate_tokens(text, tokens, iad):
-        line = max(0, int(entry.get("line", 1) or 1) - 1)
-        if line >= len(line_offsets):
+    for atom in atom_list:
+        if not isinstance(atom, dict):
             continue
-        span_start = int(entry.get("span_start", -1) or -1)
-        span_end = int(entry.get("span_end", -1) or -1)
-        if span_start < 0 or span_end <= span_start:
+        if atom.get("type") != C.LA_T["VAL_STR"]:
             continue
-        kind = int(entry.get("kind", tm.TEXTMAP_KIND_OTHER) or tm.TEXTMAP_KIND_OTHER)
+        aid = tm._int_value(atom.get("id"), -1)
+        opt = tm._int_value(atom.get("opt"), -1)
+        if aid < 0 or aid >= len(spans) or opt < 0 or opt >= len(str_list):
+            continue
+        span = spans[aid]
+        if not isinstance(span, dict):
+            continue
+        try:
+            line = int(span.get("line", 1) or 1) - 1
+            start_char = int(span.get("start_char", 0) or 0)
+            end_char = int(span.get("end_char", start_char) or start_char)
+        except (TypeError, ValueError):
+            continue
+        if line < 0 or line >= len(line_offsets) or end_char <= start_char:
+            continue
+        token = SourceToken(
+            text=str(span.get("text", "") or ""),
+            line=line,
+            start_char=start_char,
+            end_char=end_char,
+            kind="string",
+        )
+        if not _source_token_matches_text(text, token):
+            continue
+        kind = int(kind_map.get(aid, tm.TEXTMAP_KIND_OTHER) or tm.TEXTMAP_KIND_OTHER)
         semantic_type = (
             "dialogue"
             if kind == tm.TEXTMAP_KIND_DIALOGUE
             else ("speakerName" if kind == tm.TEXTMAP_KIND_NAME else "string")
         )
-        line_start = line_offsets[line]
-        start_char = max(0, span_start - line_start)
-        end_char = max(start_char, span_end - line_start)
         add_range(line, start_char, end_char, semantic_type)
     out.sort(
         key=lambda item: (item.line, item.start_char, item.end_char, item.semantic_type)
@@ -2081,7 +2384,8 @@ def semantic_tokens_for_result(
     unused_macro_symbol_ids: set[str] | None = None,
     position_encoding: str = POSITION_ENCODING_UTF16,
 ) -> list[int]:
-    encoded: dict[tuple[int, int, int], tuple[int, int]] = {}
+    candidates: list[tuple[int, int, int, int, int, int, int]] = []
+    order = 0
     unused_macro_symbol_ids = (
         unused_macro_symbol_ids if isinstance(unused_macro_symbol_ids, set) else set()
     )
@@ -2098,11 +2402,16 @@ def semantic_tokens_for_result(
         end_char: int,
         token_type: str,
         modifiers: int,
+        priority: int,
     ) -> None:
+        nonlocal order
         token_type_id = SEMANTIC_TOKEN_TYPE_INDEX.get(token_type)
         if token_type_id is None or end_char <= start_char:
             return
-        encoded[(line, start_char, end_char)] = (token_type_id, modifiers)
+        candidates.append(
+            (priority, order, line, start_char, end_char, token_type_id, modifiers)
+        )
+        order += 1
 
     for occurrence in occurrences_for_result(result):
         modifiers = (
@@ -2120,6 +2429,7 @@ def semantic_tokens_for_result(
             occurrence.end_char,
             occurrence.semantic_type,
             modifiers,
+            50,
         )
     for item in result.string_semantics:
         add_token(
@@ -2128,13 +2438,38 @@ def semantic_tokens_for_result(
             item.end_char,
             item.semantic_type,
             0,
+            100,
         )
+    for token in _compiler_source_tokens(result):
+        if token.kind == "keyword":
+            add_token(token.line, token.start_char, token.end_char, "keyword", 0, 10)
+        elif token.kind == "type":
+            add_token(token.line, token.start_char, token.end_char, "type", 0, 10)
+    selected: dict[tuple[int, int, int], tuple[int, int]] = {}
+    occupied: dict[int, list[tuple[int, int]]] = {}
+    for (
+        _priority,
+        _order,
+        line,
+        start_char,
+        end_char,
+        token_type_id,
+        modifiers,
+    ) in sorted(candidates, key=lambda item: (-item[0], item[2], item[3], item[1])):
+        ranges = occupied.setdefault(line, [])
+        if any(
+            start_char < used_end and end_char > used_start
+            for used_start, used_end in ranges
+        ):
+            continue
+        ranges.append((start_char, end_char))
+        selected[(line, start_char, end_char)] = (token_type_id, modifiers)
     data: list[int] = []
     prev_line = 0
     prev_start = 0
     lines = result.text.split("\n")
-    for line, start_char, end_char in sorted(encoded):
-        token_type_id, modifiers = encoded[(line, start_char, end_char)]
+    for line, start_char, end_char in sorted(selected):
+        token_type_id, modifiers = selected[(line, start_char, end_char)]
         line_text = lines[line] if 0 <= line < len(lines) else ""
         start_char = _char_to_lsp_character(line_text, start_char, position_encoding)
         end_char = _char_to_lsp_character(line_text, end_char, position_encoding)
@@ -2270,13 +2605,14 @@ def document_symbols_to_lsp(
             continue
         seen.add(key)
         rng = _line_range(result.text, rec.line, position_encoding)
+        selection_range = _definition_range(result.text, rec, position_encoding)
         out.append(
             {
                 "name": rec.name,
                 "detail": rec.detail,
                 "kind": _symbol_kind(rec),
                 "range": rng,
-                "selectionRange": rng,
+                "selectionRange": selection_range,
             }
         )
     return out
@@ -2331,9 +2667,35 @@ def completion_items(
     character: int,
     position_encoding: str = POSITION_ENCODING_UTF16,
 ) -> list[dict[str, Any]]:
-    token, rng, token_kind = word_at_position(
-        result.text, line, character, position_encoding
-    )
+    occurrence = occurrence_at_position(result, line, character, position_encoding)
+    if occurrence is None:
+        source_token = _compiler_token_at_position(
+            result, line, character, position_encoding
+        )
+        if source_token is None:
+            token, rng, token_kind = word_at_position(
+                result.text, line, character, position_encoding
+            )
+        else:
+            token = source_token.text
+            rng = _range(
+                source_token.line,
+                source_token.start_char,
+                source_token.end_char,
+                _line_text_at(result.text, source_token.line),
+                position_encoding,
+            )
+            token_kind = "label" if source_token.kind == "label" else "ident"
+    else:
+        token = occurrence.name
+        rng = _range(
+            occurrence.line,
+            occurrence.start_char,
+            occurrence.end_char,
+            _line_text_at(result.text, occurrence.line),
+            position_encoding,
+        )
+        token_kind = "label" if occurrence.kind in ("label", "z_label") else "ident"
     prefix = token.casefold()
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -2417,9 +2779,35 @@ def hover_for_position(
     character: int,
     position_encoding: str = POSITION_ENCODING_UTF16,
 ) -> dict[str, Any] | None:
-    token, rng, token_kind = word_at_position(
-        result.text, line, character, position_encoding
-    )
+    occurrence = occurrence_at_position(result, line, character, position_encoding)
+    if occurrence is not None:
+        token = occurrence.name
+        rng = _range(
+            occurrence.line,
+            occurrence.start_char,
+            occurrence.end_char,
+            _line_text_at(result.text, occurrence.line),
+            position_encoding,
+        )
+        token_kind = "label" if occurrence.kind in ("label", "z_label") else "ident"
+    else:
+        source_token = _compiler_token_at_position(
+            result, line, character, position_encoding
+        )
+        if source_token is None:
+            token, rng, token_kind = word_at_position(
+                result.text, line, character, position_encoding
+            )
+        else:
+            token = source_token.text
+            rng = _range(
+                source_token.line,
+                source_token.start_char,
+                source_token.end_char,
+                _line_text_at(result.text, source_token.line),
+                position_encoding,
+            )
+            token_kind = "label" if source_token.kind == "label" else "ident"
     if not token or rng is None:
         return None
     key = token.casefold()
@@ -2478,53 +2866,6 @@ def hover_for_position(
     return None
 
 
-def definition_locations(
-    result: AnalysisResult,
-    line: int,
-    character: int,
-    position_encoding: str = POSITION_ENCODING_UTF16,
-    text_for_path: Any = None,
-    uri_for_path: Any = None,
-) -> list[dict[str, Any]]:
-    token, _, token_kind = word_at_position(
-        result.text, line, character, position_encoding
-    )
-    if not token:
-        return []
-    key = token.casefold()
-    locations: list[dict[str, Any]] = []
-    seen: set[tuple[str, int]] = set()
-    if token_kind == "label":
-        rec = result.label_definitions.get(key) or result.z_label_definitions.get(key)
-        if rec:
-            _append_definition_location(
-                locations,
-                seen,
-                rec,
-                result.path,
-                current_path=result.path,
-                current_text=result.text,
-                position_encoding=position_encoding,
-                text_for_path=text_for_path,
-                uri_for_path=uri_for_path,
-            )
-        return locations
-    for mapping in (result.local_definitions, result.project.definitions):
-        for rec in mapping.get(key, []):
-            _append_definition_location(
-                locations,
-                seen,
-                rec,
-                result.path,
-                current_path=result.path,
-                current_text=result.text,
-                position_encoding=position_encoding,
-                text_for_path=text_for_path,
-                uri_for_path=uri_for_path,
-            )
-    return locations
-
-
 def definition_locations_for_occurrence(
     result: AnalysisResult,
     occurrence: SymbolOccurrence,
@@ -2534,7 +2875,7 @@ def definition_locations_for_occurrence(
 ) -> list[dict[str, Any]]:
     key = occurrence.name.casefold()
     locations: list[dict[str, Any]] = []
-    seen: set[tuple[str, int]] = set()
+    seen: set[tuple[str, int, int, int]] = set()
     if occurrence.symbol_id.startswith("cmd:"):
         for mapping in (result.local_definitions, result.project.definitions):
             for rec in mapping.get(key, []):
@@ -2621,11 +2962,26 @@ def definition_locations_for_occurrence(
                 uri_for_path=uri_for_path,
             )
         return locations
+    if occurrence.symbol_id.startswith("label:"):
+        rec = result.label_definitions.get(key) or result.z_label_definitions.get(key)
+        if rec:
+            _append_definition_location(
+                locations,
+                seen,
+                rec,
+                result.path,
+                current_path=result.path,
+                current_text=result.text,
+                position_encoding=position_encoding,
+                text_for_path=text_for_path,
+                uri_for_path=uri_for_path,
+            )
+        return locations
     return locations
 
 
 TEXT_DOCUMENT_SYNC_FULL = 1
-LSP_INDEX_CACHE_VERSION = 5
+LSP_INDEX_CACHE_VERSION = 9
 DEFAULT_COMPLETION_KIND_VALUE_SET = set(range(1, COMPLETION_KIND_TYPE_PARAMETER + 1))
 
 
@@ -2665,6 +3021,8 @@ def _definition_record_to_cache(record: DefinitionRecord) -> dict[str, Any]:
         "detail": record.detail,
         "scope": record.scope,
         "signature": record.signature,
+        "start_char": record.start_char,
+        "end_char": record.end_char,
     }
 
 
@@ -2728,6 +3086,8 @@ def _definition_record_from_cache(item: dict[str, Any], path: str) -> Definition
         detail=_cache_str(item, "detail"),
         scope=_cache_str(item, "scope"),
         signature=_cache_str(item, "signature"),
+        start_char=_cache_int(item, "start_char"),
+        end_char=_cache_int(item, "end_char"),
     )
 
 
@@ -3706,13 +4066,6 @@ class SSLanguageServer:
         directory = os.path.abspath(directory or ".")
         return _sorted_dir_paths(directory, self.overlays_for_dir(directory), ".ss")
 
-    def directory_paths(self, directory: str) -> list[str]:
-        directory = os.path.abspath(directory or ".")
-        overlays = self.overlays_for_dir(directory)
-        return _sorted_dir_paths(directory, overlays, ".inc") + _sorted_dir_paths(
-            directory, overlays, ".ss"
-        )
-
     def analyze_base(self, doc: DocumentState, force: bool = False) -> AnalysisResult:
         directory = os.path.abspath(os.path.dirname(doc.path) or ".")
         project_entry = self.project_for_directory(directory)
@@ -3777,8 +4130,11 @@ class SSLanguageServer:
     ) -> DirectoryLinkDiagnosticsEntry:
         directory = os.path.abspath(directory or ".")
         project_entry = self.project_for_directory(directory)
-        paths = self.directory_paths(directory)
+        inc_paths = _sorted_dir_paths(
+            directory, self.overlays_for_dir(directory), ".inc"
+        )
         scene_paths = self.scene_paths(directory)
+        paths = inc_paths + scene_paths
         entry = self.link_diagnostics_cache.get(directory)
         if entry is None or entry.project_signature != project_entry.signature:
             cached_entry = self.load_persistent_link_diagnostics(
@@ -3811,12 +4167,25 @@ class SSLanguageServer:
             entry.file_has_diagnostics.pop(path, None)
             entry.file_occurrences.pop(path, None)
             removed = True
-        dirty_paths = [
+        inc_changed = rebuild_all or any(
+            entry.file_signatures.get(path) != self.path_source_signature(path)
+            for path in inc_paths
+        )
+        if inc_changed:
+            dirty_paths = list(paths)
+        else:
+            dirty_paths = [
+                path
+                for path in scene_paths
+                if entry.file_signatures.get(path) != self.path_source_signature(path)
+            ]
+        dirty_path_keys = {_path_identity(path) for path in dirty_paths}
+        dirty_paths.extend(
             path
             for path in paths
-            if rebuild_all
-            or entry.file_signatures.get(path) != self.path_source_signature(path)
-        ]
+            if _path_identity(path) not in dirty_path_keys
+            and path not in entry.file_signatures
+        )
         if not rebuild_all and not removed and not dirty_paths:
             return entry
         progress = self.begin_scan_progress(
@@ -3839,7 +4208,15 @@ class SSLanguageServer:
                 project_entry,
                 scan_docs,
                 progress,
-                lambda doc: _link_scan_result(self.analyze_base(doc)),
+                lambda doc: _link_scan_result(
+                    _silent_stdout_call(
+                        analyze_document,
+                        doc.path,
+                        doc.text,
+                        project=project_entry.project,
+                        run_bs=False,
+                    )
+                ),
             )
             for path, doc in scan_docs:
                 self.raise_if_request_cancelled()
@@ -3958,6 +4335,7 @@ class SSLanguageServer:
                 diagnostics=[*base.diagnostics, *extras],
                 lad=base.lad,
                 sad=base.sad,
+                mad=base.mad,
                 replace_tree=base.replace_tree,
                 local_definitions=base.local_definitions,
                 label_definitions=base.label_definitions,
@@ -3965,6 +4343,8 @@ class SSLanguageServer:
                 document_symbols=base.document_symbols,
                 occurrences=base.occurrences,
                 string_semantics=base.string_semantics,
+                replace_uses=base.replace_uses,
+                inc_iad2=base.inc_iad2,
             )
         doc.analysis_signature = signature
         return doc.analysis
@@ -4042,7 +4422,7 @@ class SSLanguageServer:
         entry = self.link_diagnostics_for_directory(directory)
         key = str(name or "").casefold()
         locations: list[dict[str, Any]] = []
-        seen: set[tuple[str, int]] = set()
+        seen: set[tuple[str, int, int, int]] = set()
         for records in entry.file_commands.values():
             for rec in records:
                 if rec.name.casefold() != key:
@@ -4416,28 +4796,19 @@ class SSLanguageServer:
         occurrence = occurrence_at_position(
             result, line, character, self.position_encoding
         )
-        if occurrence is not None:
-            if occurrence.symbol_id.startswith("cmd:"):
-                defs = self.command_implementation_locations(
-                    os.path.dirname(doc.path) or ".", occurrence.name
-                )
-                if defs:
-                    self.respond(msg_id, result=defs)
-                    return
-            defs = definition_locations_for_occurrence(
-                result,
-                occurrence,
-                self.position_encoding,
-                self.text_for_path,
-                self.uri_for_path,
+        if occurrence is None:
+            self.respond(msg_id, result=[])
+            return
+        if occurrence.symbol_id.startswith("cmd:"):
+            defs = self.command_implementation_locations(
+                os.path.dirname(doc.path) or ".", occurrence.name
             )
             if defs:
                 self.respond(msg_id, result=defs)
                 return
-        defs = definition_locations(
+        defs = definition_locations_for_occurrence(
             result,
-            line,
-            character,
+            occurrence,
             self.position_encoding,
             self.text_for_path,
             self.uri_for_path,

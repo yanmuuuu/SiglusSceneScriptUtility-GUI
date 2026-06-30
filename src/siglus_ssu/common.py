@@ -241,16 +241,21 @@ def scan_text_comments(
     unclosed_double_message: str = "",
     unclosed_block_message: str = "",
     allow_trailing_escape_eof: bool = False,
+    with_map: bool = False,
 ):
     text = str(text or "") + ("\0" * 256)
     out = []
+    source_map = [] if with_map else None
     state = 0
     line = 1
+    column = 0
     block_line = 1
     i = 0
     while text[i] != "\0":
         ch = text[i]
         out_ch = ch
+        source_line = line
+        source_column = column
         if ch == "\n":
             if single_quote_mode == "string" and state in (1, 2):
                 return {
@@ -312,13 +317,16 @@ def scan_text_comments(
                 return {"ok": False, "line": line, "message": invalid_escape_message}
         elif state == 6:
             i += 1
+            column += 1
             continue
         elif state == 7:
             if ch == "*" and text[i + 1] == "/":
                 state = 0
                 i += 2
+                column += 2
                 continue
             i += 1
+            column += 1
             continue
         else:
             if single_quote_mode != "none" and ch == "'":
@@ -328,22 +336,31 @@ def scan_text_comments(
             elif semicolon_line_comment and ch == ";":
                 state = 6
                 i += 1
+                column += 1
                 continue
             elif slash_line_comment and ch == "/" and text[i + 1] == "/":
                 state = 6
                 i += 2
+                column += 2
                 continue
             elif block_comment and ch == "/" and text[i + 1] == "*":
                 block_line = line
                 state = 7
                 i += block_comment_enter_advance
+                column += block_comment_enter_advance
                 continue
             elif case_mode == "lower" and "A" <= ch <= "Z":
                 out_ch = chr(ord(ch) + 32)
             elif case_mode == "upper" and "a" <= ch <= "z":
                 out_ch = chr(ord(ch) - 32)
+        if source_map is not None:
+            source_map.append((source_line, source_column, i))
         out.append(out_ch)
         i += 1
+        if ch == "\n":
+            column = 0
+        else:
+            column += 1
     if single_quote_mode == "string":
         if state == 1 or (state == 2 and not allow_trailing_escape_eof):
             return {"ok": False, "line": line, "message": unclosed_single_message}
@@ -353,7 +370,10 @@ def scan_text_comments(
         return {"ok": False, "line": line, "message": unclosed_double_message}
     if state == 7:
         return {"ok": False, "line": block_line, "message": unclosed_block_message}
-    return {"ok": True, "text": "".join(out), "line": line}
+    result = {"ok": True, "text": "".join(out), "line": line}
+    if source_map is not None:
+        result["source_map"] = source_map
+    return result
 
 
 def split_element_code(code):

@@ -95,12 +95,21 @@ def parallel_process_completed_map(
         )
         futures = {}
         pending = set()
+        next_index = 0
+
+        def submit_next() -> None:
+            nonlocal next_index
+            if next_index >= len(item_list):
+                return
+            item = item_list[next_index]
+            future = executor.submit(process_fn, item)
+            futures[future] = next_index
+            pending.add(future)
+            next_index += 1
+
         try:
-            futures = {
-                executor.submit(process_fn, item): index
-                for index, item in enumerate(item_list)
-            }
-            pending = set(futures)
+            for _ in range(workers):
+                submit_next()
             while pending:
                 if on_poll is not None:
                     on_poll()
@@ -116,15 +125,18 @@ def parallel_process_completed_map(
                         continue
                 for future in done:
                     if on_poll is None:
-                        pending.remove(future)
-                    index = futures[future]
+                        pending.discard(future)
+                    else:
+                        pending.discard(future)
+                    index = futures.pop(future)
                     item = item_list[index]
                     result = future.result()
                     results[index] = result
                     if on_result is not None:
                         on_result(item, result)
+                    submit_next()
         except BaseException:
-            for future in futures:
+            for future in pending:
                 future.cancel()
             terminate_workers = getattr(executor, "terminate_workers", None)
             if callable(terminate_workers):

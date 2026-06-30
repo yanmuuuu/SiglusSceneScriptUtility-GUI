@@ -3,6 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 
+## [v0.3.7] - TBA
+- Better LSP.
+
+
 ## [v0.3.6] - 2026-06-14
 - Security updates.
 - Added --angou for more modes.
