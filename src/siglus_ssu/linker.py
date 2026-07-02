@@ -187,13 +187,14 @@ def _set_binary_size_stats(ctx, scn_names, dat_list, lzss_list, lzss_mode):
 
 def _build_index_list_for_strings(strs):
     idx = []
-    ofs_chars = 0
+    ofs_units = 0
     blob = bytearray()
     for s in strs:
-        s = s or ""
-        idx.append((ofs_chars, len(s)))
-        blob.extend((s or "").encode("utf-16le", "surrogatepass"))
-        ofs_chars += len(s)
+        raw = (s or "").encode("utf-16le", "surrogatepass")
+        n = len(raw) // 2
+        idx.append((ofs_units, n))
+        blob.extend(raw)
+        ofs_units += n
     return idx, bytes(blob)
 
 
