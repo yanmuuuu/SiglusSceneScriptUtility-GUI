@@ -8,6 +8,7 @@ import time
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 
+from .BS import set_shuffle_seed
 from . import compiler
 from . import pck
 from ._const_manager import get_const_module, load_const_module
@@ -39,7 +40,7 @@ class _TestResult:
 def _usage(out=None) -> None:
     if out is None:
         out = sys.stderr
-    out.write("usage: siglus-ssu test <input_pck|input_dir>\n")
+    out.write("usage: siglus-ssu test [--serial] <input_pck|input_dir>\n")
     out.write(
         "Round-trip test .pck files with OS data, timings, and const-profile fallback.\n"
     )
@@ -262,14 +263,19 @@ def _compare_payload(original_pck: str, rebuilt_pck: str, original_blob: bytes):
     return ok, detail, out, err
 
 
-def _compile_with_profile_fallback(extract_dir: str, rebuilt_pck: str):
+def _compile_with_profile_fallback(extract_dir: str, rebuilt_pck: str, serial=False):
     attempts = []
     for profile in _const_profiles():
         _set_const_profile(profile)
         if os.path.isfile(rebuilt_pck):
             os.remove(rebuilt_pck)
         started = time.perf_counter()
-        rc, out, err = _capture(compiler.main, [extract_dir, rebuilt_pck])
+        set_shuffle_seed(1)
+        compile_args = []
+        if serial:
+            compile_args.append("--serial")
+        compile_args.extend([extract_dir, rebuilt_pck])
+        rc, out, err = _capture(compiler.main, compile_args)
         elapsed = max(0.0, time.perf_counter() - started)
         ok = rc == 0 and os.path.isfile(rebuilt_pck)
         if rc == 0 and not os.path.isfile(rebuilt_pck):
@@ -310,7 +316,7 @@ def _print_compile_errors(attempts) -> None:
         )
 
 
-def _test_one(path: str, index: int, total: int) -> _TestResult:
+def _test_one(path: str, index: int, total: int, serial=False) -> _TestResult:
     started = time.perf_counter()
     path = os.path.abspath(path)
     print(f"[{index:d}/{total:d}] {path}")
@@ -376,7 +382,7 @@ def _test_one(path: str, index: int, total: int) -> _TestResult:
         if status == "PENDING":
             rebuilt_pck = os.path.join(extract_dir, os.path.basename(path))
             compile_ok, compile_profile, attempts = _compile_with_profile_fallback(
-                extract_dir, rebuilt_pck
+                extract_dir, rebuilt_pck, serial=serial
             )
             final_attempt = attempts[-1] if attempts else {}
             _append_timing(
@@ -432,6 +438,14 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     argv = list(argv)
+    serial = False
+    filtered = []
+    for arg in argv:
+        if arg == "--serial":
+            serial = True
+        else:
+            filtered.append(arg)
+    argv = filtered
     if len(argv) != 1 or argv[0] in ("-h", "--help", "help"):
         _usage(
             sys.stdout if argv and argv[0] in ("-h", "--help", "help") else sys.stderr
@@ -448,7 +462,7 @@ def main(argv=None):
     print(f"Round-trip test pck files: {len(paths):d}")
     results = []
     for i, path in enumerate(paths, 1):
-        results.append(_test_one(path, i, len(paths)))
+        results.append(_test_one(path, i, len(paths), serial=serial))
     passed = sum(1 for r in results if r.status == "PASS")
     skipped = sum(1 for r in results if r.status == "SKIP")
     failed = sum(1 for r in results if r.status == "FAIL")

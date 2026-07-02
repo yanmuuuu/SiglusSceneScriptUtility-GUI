@@ -169,8 +169,9 @@ def _usage(out=None):
         "    output_json    Defaults to <input_name>.tutorial.json next to input_pck\n"
         "\n"
         "Test mode:\n"
-        f"  {p} test <input_pck|input_dir>\n"
+        f"  {p} test [--serial] <input_pck|input_dir>\n"
         "    input_dir      Tests .pck files directly under the directory\n"
+        "    --serial       Disable parallel compilation during rebuild\n"
         "    output         Prints total/summary timings for analyze/extract/compile/payload/cleanup\n"
         "    const-profile  Compile tries profiles 0, 1, then 2 before reporting failure\n"
     )
