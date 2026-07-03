@@ -7,8 +7,10 @@ from tkinter import ttk
 
 from ..widgets import (
     AngouRow,
+    CollapsibleSection,
     FileListRow,
     PathRow,
+    Section,
     TextRow,
     labeled_check,
     labeled_combo,
@@ -31,12 +33,23 @@ class ExtractPanel(BasePanel):
             ],
             command=self._on_op,
         )
-        self.input_row = PathRow(parent, "输入", mode="either")
+        paths = Section(parent, "路径")
+        paths.pack(fill=tk.X, pady=4)
+        self.input_row = PathRow(
+            paths.body,
+            "输入",
+            mode="either",
+            hint="① .pck  ② 含 .dat 的文件夹或 .pck  ③ Gameexe.dat 或所在目录",
+        )
         self.input_row.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(parent, "输出目录", mode="dir")
+        self.output_row = PathRow(
+            paths.body, "输出目录", mode="dir", hint="留空则输出到输入文件旁边"
+        )
         self.output_row.pack(fill=tk.X, pady=4)
-        self.disam = labeled_check(parent, "同时反汇编并反编译（--disam）")
-        self.angou = AngouRow(parent)
+        opts = Section(parent, "选项")
+        opts.pack(fill=tk.X, pady=4)
+        self.disam = labeled_check(opts.body, "同时反汇编并反编译（--disam）")
+        self.angou = AngouRow(opts.body)
         self.angou.pack(fill=tk.X, pady=4)
         self._on_op()
 
@@ -79,24 +92,34 @@ class CompilePanel(BasePanel):
             "操作类型",
             [("std", "标准编译（.ss → .pck）"), ("gei", "仅编译 Gameexe.dat")],
         )
-        self.input_row = PathRow(parent, "输入目录", mode="dir")
+        paths = Section(parent, "路径")
+        paths.pack(fill=tk.X, pady=4)
+        self.input_row = PathRow(
+            paths.body,
+            "输入目录",
+            mode="dir",
+            hint="包含 .ss 源码与 Gameexe.ini（如有）的工作目录",
+        )
         self.input_row.pack(fill=tk.X, pady=4)
         self.output_row = PathRow(
-            parent,
+            paths.body,
             "输出",
             mode="save",
             filetypes=[("PCK 文件", "*.pck"), ("所有文件", "*.*")],
+            hint="填写 .pck 路径，或选择已存在目录（将生成 Scene.pck）",
         )
         self.output_row.pack(fill=tk.X, pady=4)
-        opts = ttk.LabelFrame(parent, text="选项", padding=6)
+        opts = Section(parent, "常用选项")
         opts.pack(fill=tk.X, pady=4)
-        self.charset = labeled_combo(opts, "源文件编码", ["自动", "UTF-8", "Shift-JIS"])
-        self.debug = labeled_check(opts, "保留临时文件（--debug）")
-        self.serial = labeled_check(opts, "串行编译（--serial）")
-        self.dat_repack = labeled_check(opts, "仅重打包已有 .dat（--dat-repack）")
-        self.no_angou = labeled_check(opts, "禁用加密（--no-angou）")
-        self.no_lzss = labeled_check(opts, "禁用 LZSS（--no-lzss）")
-        self.tmp_row = PathRow(opts, "增量缓存目录", mode="dir")
+        self.charset = labeled_combo(opts.body, "源文件编码", ["自动", "UTF-8", "Shift-JIS"])
+        self.debug = labeled_check(opts.body, "保留临时文件（--debug）")
+        self.serial = labeled_check(opts.body, "串行编译（--serial）")
+        adv = CollapsibleSection(parent, "高级选项", start_open=False)
+        adv.pack(fill=tk.X, pady=4)
+        self.dat_repack = labeled_check(adv.body, "仅重打包已有 .dat（--dat-repack）")
+        self.no_angou = labeled_check(adv.body, "禁用加密（--no-angou）")
+        self.no_lzss = labeled_check(adv.body, "禁用 LZSS（--no-lzss）")
+        self.tmp_row = PathRow(adv.body, "增量缓存目录", mode="dir", hint="填写则启用 --tmp（与 --debug 互斥）")
         self.tmp_row.pack(fill=tk.X, pady=4)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
@@ -144,22 +167,49 @@ class AnalyzePanel(BasePanel):
             parent,
             "操作类型",
             ["分析单个文件", "比较两个文件", "台词统计导出 CSV", "分析 Gameexe.dat"],
+            command=self._on_op,
         )
-        self.in1 = PathRow(parent, "输入文件 1", mode="file")
+        paths = Section(parent, "路径")
+        paths.pack(fill=tk.X, pady=4)
+        self.in1 = PathRow(paths.body, "输入文件 1", mode="file")
         self.in1.pack(fill=tk.X, pady=4)
-        self.in2 = PathRow(parent, "输入文件 2", mode="file")
+        self.in2 = PathRow(paths.body, "输入文件 2", mode="file")
         self.in2.pack(fill=tk.X, pady=4)
         self.csv_out = PathRow(
-            parent,
+            paths.body,
             "输出 CSV",
             mode="save",
             filetypes=[("CSV", "*.csv"), ("所有文件", "*.*")],
         )
         self.csv_out.pack(fill=tk.X, pady=4)
-        self.disam = labeled_check(parent, "写出反汇编（--disam）")
-        self.payload = labeled_check(parent, "语义级比较（--payload）")
-        self.angou = AngouRow(parent)
+        opts = Section(parent, "选项")
+        opts.pack(fill=tk.X, pady=4)
+        self.disam = labeled_check(opts.body, "写出反汇编（--disam）")
+        self.payload = labeled_check(opts.body, "语义级比较（--payload，较慢）")
+        self.angou = AngouRow(opts.body)
         self.angou.pack(fill=tk.X, pady=4)
+        self._on_op()
+
+    def _on_op(self) -> None:
+        op = self.op.get()
+        if op == "比较两个文件":
+            self.in2.pack(fill=tk.X, pady=4)
+            self.payload.widget.pack(anchor=tk.W, pady=2)
+            self.disam.widget.pack(anchor=tk.W, pady=2)
+            self.csv_out.pack_forget()
+        elif op == "台词统计导出 CSV":
+            self.in2.pack_forget()
+            self.payload.pack_forget()
+            self.disam.pack_forget()
+            self.csv_out.pack(fill=tk.X, pady=4)
+        else:
+            self.in2.pack_forget()
+            self.csv_out.pack_forget()
+            self.payload.pack_forget()
+            if op == "分析单个文件":
+                self.disam.widget.pack(anchor=tk.W, pady=2)
+            else:
+                self.disam.pack_forget()
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         op = self.op.get()
@@ -212,18 +262,55 @@ class G00Panel(BasePanel):
     TITLE = "图片 g00"
 
     def _build(self, parent: ttk.Frame) -> None:
-        self.op = labeled_combo(parent, "操作", ["分析 --a", "提取 --x", "合并 --m", "创建 --c"])
-        self.input_row = PathRow(parent, "输入", mode="either")
+        self.op = labeled_combo(
+            parent,
+            "操作",
+            ["分析 --a", "提取 --x", "合并 --m", "创建 --c"],
+            command=self._on_op,
+        )
+        paths = Section(parent, "路径")
+        paths.pack(fill=tk.X, pady=4)
+        self.input_row = PathRow(paths.body, "输入", mode="either")
         self.input_row.pack(fill=tk.X, pady=4)
-        self.merge_list = FileListRow(parent, "合并文件列表（--m）")
+        self.merge_list = FileListRow(paths.body, "合并文件列表（--m）")
         self.merge_list.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(parent, "输出", mode="either")
+        self.output_row = PathRow(paths.body, "输出", mode="either")
         self.output_row.pack(fill=tk.X, pady=4)
-        self.trim = labeled_check(parent, "裁剪透明边（--trim）")
-        self.type_row = TextRow(parent, "g00 类型")
+        opts = Section(parent, "选项")
+        opts.pack(fill=tk.X, pady=4)
+        self.trim = labeled_check(opts.body, "裁剪透明边（--trim）")
+        self.type_row = TextRow(opts.body, "g00 类型", hint="创建模式：--type N")
         self.type_row.pack(fill=tk.X, pady=4)
-        self.refer_row = PathRow(parent, "参考 g00", mode="file")
+        self.refer_row = PathRow(opts.body, "参考 g00", mode="file")
         self.refer_row.pack(fill=tk.X, pady=4)
+        self._on_op()
+
+    def _on_op(self) -> None:
+        op = self.op.get()
+        if op.startswith("分析"):
+            self.output_row.pack_forget()
+            self.merge_list.pack_forget()
+            self.trim.pack_forget()
+            self.type_row.pack_forget()
+            self.refer_row.pack_forget()
+        elif op.startswith("提取"):
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.merge_list.pack_forget()
+            self.trim.widget.pack(anchor=tk.W, pady=2)
+            self.type_row.pack_forget()
+            self.refer_row.pack_forget()
+        elif op.startswith("合并"):
+            self.merge_list.pack(fill=tk.X, pady=4)
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.trim.widget.pack(anchor=tk.W, pady=2)
+            self.type_row.pack_forget()
+            self.refer_row.pack_forget()
+        else:
+            self.merge_list.pack_forget()
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.trim.pack_forget()
+            self.type_row.pack(fill=tk.X, pady=4)
+            self.refer_row.pack(fill=tk.X, pady=4)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         op = self.op.get()
@@ -282,15 +369,40 @@ class SoundPanel(BasePanel):
     TITLE = "音频"
 
     def _build(self, parent: ttk.Frame) -> None:
-        self.op = labeled_combo(parent, "操作", ["提取 --x", "分析 --a", "编码 --c", "播放 --play"])
-        self.input_row = PathRow(parent, "输入", mode="either")
+        self.op = labeled_combo(
+            parent,
+            "操作",
+            ["提取 --x", "分析 --a", "编码 --c", "播放 --play"],
+            command=self._on_op,
+        )
+        paths = Section(parent, "路径")
+        paths.pack(fill=tk.X, pady=4)
+        self.input_row = PathRow(paths.body, "输入", mode="either")
         self.input_row.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(parent, "输出目录", mode="dir")
+        self.output_row = PathRow(paths.body, "输出目录", mode="dir")
         self.output_row.pack(fill=tk.X, pady=4)
-        self.gameexe_row = PathRow(parent, "Gameexe.dat", mode="file")
+        self.gameexe_row = PathRow(
+            paths.body, "Gameexe.dat", mode="file", hint="提取/播放时可选，用于正确解密"
+        )
         self.gameexe_row.pack(fill=tk.X, pady=4)
-        self.angou = AngouRow(parent)
+        self.angou = AngouRow(paths.body)
         self.angou.pack(fill=tk.X, pady=4)
+        self._on_op()
+
+    def _on_op(self) -> None:
+        op = self.op.get()
+        if op.startswith("分析"):
+            self.output_row.pack_forget()
+            self.gameexe_row.pack_forget()
+        elif op.startswith("播放"):
+            self.output_row.pack_forget()
+            self.gameexe_row.pack(fill=tk.X, pady=4)
+        elif op.startswith("提取"):
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.gameexe_row.pack(fill=tk.X, pady=4)
+        else:
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.gameexe_row.pack_forget()
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         op = self.op.get()
@@ -329,13 +441,33 @@ class VideoPanel(BasePanel):
     TITLE = "视频"
 
     def _build(self, parent: ttk.Frame) -> None:
-        self.op = labeled_combo(parent, "操作", ["提取 --x", "分析 --a", "编码 --c"])
-        self.input_row = PathRow(parent, "输入", mode="either")
+        self.op = labeled_combo(
+            parent,
+            "操作",
+            ["提取 --x", "分析 --a", "编码 --c"],
+            command=self._on_op,
+        )
+        paths = Section(parent, "路径")
+        paths.pack(fill=tk.X, pady=4)
+        self.input_row = PathRow(paths.body, "输入", mode="either")
         self.input_row.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(parent, "输出", mode="either")
+        self.output_row = PathRow(paths.body, "输出", mode="either")
         self.output_row.pack(fill=tk.X, pady=4)
-        self.refer_row = PathRow(parent, "参考 omv", mode="file")
+        self.refer_row = PathRow(paths.body, "参考 omv", mode="file", hint="编码模式可选")
         self.refer_row.pack(fill=tk.X, pady=4)
+        self._on_op()
+
+    def _on_op(self) -> None:
+        op = self.op.get()
+        if op.startswith("分析"):
+            self.output_row.pack_forget()
+            self.refer_row.pack_forget()
+        elif op.startswith("提取"):
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.refer_row.pack_forget()
+        else:
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.refer_row.pack(fill=tk.X, pady=4)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         if err := self.input_row.validate_exists(required=True):
@@ -699,16 +831,49 @@ PANEL_ORDER = [
     "extract",
     "compile",
     "analyze",
+    "textmap",
+    "tutorial",
     "g00",
     "sound",
     "video",
     "db",
     "koe",
-    "textmap",
     "patch",
-    "tutorial",
     "exec",
     "init",
     "test",
     "lsp",
 ]
+
+PANEL_NAV_GROUPS: list[tuple[str, list[str]]] = [
+    (
+        "场景与脚本",
+        ["extract", "compile", "analyze", "textmap", "tutorial", "exec"],
+    ),
+    (
+        "游戏资源",
+        ["g00", "sound", "video", "db", "koe"],
+    ),
+    (
+        "系统与工具",
+        ["patch", "init", "test", "lsp"],
+    ),
+]
+
+PANEL_HINTS: dict[str, str] = {
+    "extract": "从 .pck 解包场景，或将 .dat 反汇编为可读脚本。汉化流程的第一步。",
+    "compile": "把修改后的 .ss 目录重新打包为 .pck。汉化流程的最后一步。",
+    "analyze": "查看包内结构、对比两个文件差异、统计台词字数。结果输出在下方日志。",
+    "g00": "处理 Siglus 图片资源：分析、提取 PNG、合并或从图片创建 .g00。",
+    "sound": "提取/分析/编码游戏音频（.ovk .owp .nwa .ogg）。",
+    "video": "提取或编码游戏视频（.omv / .ogv）。",
+    "db": "导出、分析或重新编译游戏数据库 .dbs。",
+    "koe": "按场景或编号从 voice 目录收集角色语音到子文件夹。",
+    "textmap": "在 .ss / .dat 与 CSV 表格之间导出、写回译文（翻译工作流核心）。",
+    "patch": "修改 SiglusEngine.exe：换密钥、CJK 中文显示、中文路径等。请先备份原文件。",
+    "tutorial": "从 Scene.pck 生成剧情分支 JSON，配合 tutorial_viewer.html 查看。",
+    "exec": "从指定场景标签启动引擎（调试用）。",
+    "init": "下载运行时常量 const.py。首次使用或升级工具后执行一次。",
+    "test": "自动执行 提取→编译→对比，验证工具链是否正常。",
+    "lsp": "启动语言服务器，供 VS Code / Cursor 获得 .ss 语法提示。",
+}

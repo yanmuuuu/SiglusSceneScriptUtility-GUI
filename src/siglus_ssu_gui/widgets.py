@@ -1,12 +1,60 @@
 from __future__ import annotations
 
+import queue
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, ttk
-from typing import Literal
+from typing import Literal, NamedTuple
+
+from .theme import mono_font
 
 PathMode = Literal["file", "dir", "save", "either"]
+
+_last_browse_dir: str | None = None
+_LOG_MAX_CHARS = 400_000
+
+
+def _remember_path(path: str) -> None:
+    global _last_browse_dir
+    p = Path(path)
+    target = p if p.is_dir() else p.parent
+    if target.is_dir():
+        _last_browse_dir = str(target)
+
+
+def _initial_dir() -> str | None:
+    return _last_browse_dir
+
+
+class Section(ttk.LabelFrame):
+    def __init__(self, master: tk.Misc, title: str) -> None:
+        super().__init__(master, text=title, style="Section.TLabelframe", padding=(12, 8))
+        self.body = ttk.Frame(self)
+        self.body.pack(fill=tk.BOTH, expand=True)
+
+
+class CollapsibleSection(ttk.Frame):
+    def __init__(self, master: tk.Misc, title: str, *, start_open: bool = False) -> None:
+        super().__init__(master)
+        self._open = start_open
+        self._title = title
+        self._toggle = ttk.Button(self, text=self._label(), command=self._flip, width=24)
+        self._toggle.pack(anchor=tk.W, pady=(4, 2))
+        self.body = ttk.LabelFrame(self, text=title, style="Section.TLabelframe", padding=(12, 8))
+        if start_open:
+            self.body.pack(fill=tk.X, pady=2)
+
+    def _label(self) -> str:
+        return f"{'▼' if self._open else '▶'} {self._title}"
+
+    def _flip(self) -> None:
+        self._open = not self._open
+        self._toggle.configure(text=self._label())
+        if self._open:
+            self.body.pack(fill=tk.X, pady=2)
+        else:
+            self.body.pack_forget()
 
 
 class PathRow(ttk.Frame):
@@ -17,17 +65,23 @@ class PathRow(ttk.Frame):
         *,
         mode: PathMode = "file",
         filetypes: list[tuple[str, str]] | None = None,
-        width: int = 56,
+        hint: str = "",
     ) -> None:
         super().__init__(master)
         self.mode = mode
         self.filetypes = filetypes or [("所有文件", "*.*")]
-        ttk.Label(self, text=label, width=14).pack(side=tk.LEFT, anchor=tk.W)
+        head = ttk.Frame(self)
+        head.pack(fill=tk.X)
+        ttk.Label(head, text=label, width=12).pack(side=tk.LEFT, anchor=tk.W)
         self.var = tk.StringVar()
-        ttk.Entry(self, textvariable=self.var, width=width).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 4)
+        ttk.Entry(head, textvariable=self.var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 6)
         )
-        ttk.Button(self, text="浏览…", command=self._browse).pack(side=tk.LEFT)
+        ttk.Button(head, text="浏览…", command=self._browse, width=8).pack(side=tk.LEFT)
+        if hint:
+            ttk.Label(self, text=hint, style="Hint.TLabel", wraplength=560).pack(
+                anchor=tk.W, padx=(12, 0), pady=(2, 0)
+            )
 
     def get(self) -> str:
         return self.var.get().strip()
@@ -36,18 +90,22 @@ class PathRow(ttk.Frame):
         self.var.set(value)
 
     def _browse(self) -> None:
+        initial = _initial_dir()
+        kw = {"initialdir": initial} if initial else {}
+        path = ""
         if self.mode == "dir":
-            path = filedialog.askdirectory()
+            path = filedialog.askdirectory(**kw)
         elif self.mode == "save":
-            path = filedialog.asksaveasfilename(filetypes=self.filetypes)
+            path = filedialog.asksaveasfilename(filetypes=self.filetypes, **kw)
         elif self.mode == "either":
-            path = filedialog.askopenfilename(filetypes=self.filetypes)
+            path = filedialog.askopenfilename(filetypes=self.filetypes, **kw)
             if not path:
-                path = filedialog.askdirectory()
+                path = filedialog.askdirectory(**kw)
         else:
-            path = filedialog.askopenfilename(filetypes=self.filetypes)
+            path = filedialog.askopenfilename(filetypes=self.filetypes, **kw)
         if path:
             self.var.set(path)
+            _remember_path(path)
 
     def validate_exists(self, *, required: bool = True, as_dir: bool | None = None) -> str | None:
         value = self.get()
@@ -66,13 +124,19 @@ class PathRow(ttk.Frame):
 
 
 class TextRow(ttk.Frame):
-    def __init__(self, master: tk.Misc, label: str, *, width: int = 56) -> None:
+    def __init__(self, master: tk.Misc, label: str, *, hint: str = "") -> None:
         super().__init__(master)
-        ttk.Label(self, text=label, width=14).pack(side=tk.LEFT, anchor=tk.W)
+        head = ttk.Frame(self)
+        head.pack(fill=tk.X)
+        ttk.Label(head, text=label, width=12).pack(side=tk.LEFT, anchor=tk.W)
         self.var = tk.StringVar()
-        ttk.Entry(self, textvariable=self.var, width=width).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0)
+        ttk.Entry(head, textvariable=self.var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0)
         )
+        if hint:
+            ttk.Label(self, text=hint, style="Hint.TLabel", wraplength=560).pack(
+                anchor=tk.W, padx=(12, 0), pady=(2, 0)
+            )
 
     def get(self) -> str:
         return self.var.get().strip()
@@ -80,7 +144,12 @@ class TextRow(ttk.Frame):
 
 class AngouRow(PathRow):
     def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master, "密钥来源", mode="either", width=48)
+        super().__init__(
+            master,
+            "密钥来源",
+            mode="either",
+            hint="可选。游戏根目录、angou=明文、key=十六进制；提取失败时再填。",
+        )
 
     def append_argv(self, argv: list[str]) -> None:
         value = self.get()
@@ -94,7 +163,7 @@ class FileListRow(ttk.Frame):
         ttk.Label(self, text=label).pack(anchor=tk.W)
         box = ttk.Frame(self)
         box.pack(fill=tk.BOTH, expand=True)
-        self.listbox = tk.Listbox(box, height=4, selectmode=tk.EXTENDED)
+        self.listbox = tk.Listbox(box, height=4, selectmode=tk.EXTENDED, font=mono_font(9))
         scroll = ttk.Scrollbar(box, orient=tk.VERTICAL, command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=scroll.set)
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -105,9 +174,12 @@ class FileListRow(ttk.Frame):
         ttk.Button(btns, text="移除选中", command=self._remove).pack(side=tk.LEFT, padx=6)
 
     def _add(self) -> None:
-        paths = filedialog.askopenfilenames()
+        initial = _initial_dir()
+        kw = {"initialdir": initial} if initial else {}
+        paths = filedialog.askopenfilenames(**kw)
         for p in paths:
             self.listbox.insert(tk.END, p)
+            _remember_path(p)
 
     def _remove(self) -> None:
         for idx in reversed(self.listbox.curselection()):
@@ -123,28 +195,98 @@ class FileListRow(ttk.Frame):
 
 
 class LogPanel(ttk.Frame):
+    """批量刷新日志，避免每行触发一次 UI 更新。"""
+
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master)
+        self._queue: queue.Queue[str | None] = queue.Queue()
+        self._pending_scroll = False
+
         header = ttk.Frame(self)
-        header.pack(fill=tk.X)
-        ttk.Label(header, text="运行日志").pack(side=tk.LEFT)
-        ttk.Button(header, text="清空", command=self.clear).pack(side=tk.RIGHT)
-        self.text = tk.Text(self, height=14, wrap=tk.WORD, font=("Consolas", 10))
-        scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.text.yview)
-        self.text.configure(yscrollcommand=scroll.set, state=tk.DISABLED)
-        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        header.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(header, text="运行日志", font=("", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Button(header, text="清空", command=self.clear, width=8).pack(side=tk.RIGHT)
+        ttk.Label(header, text="右键可复制", style="Hint.TLabel").pack(side=tk.RIGHT, padx=8)
+
+        box = ttk.Frame(self)
+        box.pack(fill=tk.BOTH, expand=True)
+        self.text = tk.Text(
+            box,
+            height=12,
+            wrap=tk.NONE,
+            font=mono_font(10),
+            bg="#1e1e1e",
+            fg="#d4d4d4",
+            insertbackground="#d4d4d4",
+            relief=tk.FLAT,
+            padx=8,
+            pady=6,
+        )
+        scroll_y = ttk.Scrollbar(box, orient=tk.VERTICAL, command=self.text.yview)
+        scroll_x = ttk.Scrollbar(box, orient=tk.HORIZONTAL, command=self.text.xview)
+        self.text.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        self.text.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        scroll_x.grid(row=1, column=0, sticky="ew")
+        box.rowconfigure(0, weight=1)
+        box.columnconfigure(0, weight=1)
+
+        self.text.bind("<Key>", lambda _e: "break")
+        menu = tk.Menu(self.text, tearoff=0)
+        menu.add_command(label="复制", command=self._copy_selection)
+        menu.add_command(label="全选", command=self._select_all)
+        self.text.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
+
+        self._poll()
+
+    def _poll(self) -> None:
+        chunks: list[str] = []
+        try:
+            while True:
+                item = self._queue.get_nowait()
+                if item is None:
+                    self._pending_scroll = True
+                else:
+                    chunks.append(item)
+        except queue.Empty:
+            pass
+        if chunks:
+            self.text.insert(tk.END, "".join(chunks))
+            self._trim()
+            self._pending_scroll = True
+        if self._pending_scroll:
+            self.text.see(tk.END)
+            self._pending_scroll = False
+        self.after(80, self._poll)
+
+    def _trim(self) -> None:
+        if int(self.text.index("end-1c").split(".")[0]) > 8000:
+            self.text.delete("1.0", "4000.0")
+        content = self.text.get("1.0", tk.END)
+        if len(content) > _LOG_MAX_CHARS:
+            self.text.delete("1.0", f"1.0+{len(content) - _LOG_MAX_CHARS}c")
 
     def append(self, chunk: str) -> None:
-        self.text.configure(state=tk.NORMAL)
-        self.text.insert(tk.END, chunk)
-        self.text.see(tk.END)
-        self.text.configure(state=tk.DISABLED)
+        self._queue.put(chunk)
+
+    def mark_scroll(self) -> None:
+        self._queue.put(None)
 
     def clear(self) -> None:
-        self.text.configure(state=tk.NORMAL)
         self.text.delete("1.0", tk.END)
-        self.text.configure(state=tk.DISABLED)
+
+    def _copy_selection(self) -> None:
+        try:
+            text = self.text.get(tk.SEL_FIRST, tk.SEL_LAST)
+        except tk.TclError:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _select_all(self) -> None:
+        self.text.tag_add(tk.SEL, "1.0", tk.END)
+        self.text.mark_set(tk.INSERT, "1.0")
+        self.text.see(tk.INSERT)
 
 
 def labeled_combo(
@@ -152,15 +294,17 @@ def labeled_combo(
     label: str,
     values: list[str],
     *,
-    width: int = 40,
+    command: Callable[[], None] | None = None,
 ) -> ttk.Combobox:
     row = ttk.Frame(parent)
-    row.pack(fill=tk.X, pady=2)
-    ttk.Label(row, text=label, width=14).pack(side=tk.LEFT, anchor=tk.W)
-    combo = ttk.Combobox(row, values=values, state="readonly", width=width)
-    combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+    row.pack(fill=tk.X, pady=3)
+    ttk.Label(row, text=label, width=12).pack(side=tk.LEFT, anchor=tk.W)
+    combo = ttk.Combobox(row, values=values, state="readonly")
+    combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
     if values:
         combo.current(0)
+    if command:
+        combo.bind("<<ComboboxSelected>>", lambda _e: command())
     return combo
 
 
@@ -171,17 +315,14 @@ def labeled_radio(
     *,
     command: Callable[[], None] | None = None,
 ) -> tk.StringVar:
-    box = ttk.LabelFrame(parent, text=label, padding=6)
+    box = ttk.LabelFrame(parent, text=label, style="Section.TLabelframe", padding=(10, 6))
     box.pack(fill=tk.X, pady=4)
     var = tk.StringVar(value=options[0][0])
     for value, text in options:
         ttk.Radiobutton(box, text=text, value=value, variable=var, command=command).pack(
-            anchor=tk.W
+            anchor=tk.W, pady=1
         )
     return var
-
-
-from typing import NamedTuple
 
 
 class CheckOption(NamedTuple):
@@ -201,5 +342,5 @@ class CheckOption(NamedTuple):
 def labeled_check(parent: tk.Misc, text: str, *, default: bool = False) -> CheckOption:
     var = tk.BooleanVar(value=default)
     widget = ttk.Checkbutton(parent, text=text, variable=var)
-    widget.pack(anchor=tk.W, pady=1)
+    widget.pack(anchor=tk.W, pady=2)
     return CheckOption(var=var, widget=widget)
