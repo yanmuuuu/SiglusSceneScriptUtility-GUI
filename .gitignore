@@ -164,3 +164,6 @@ Gameexe.dat
 
 # GUI local state
 .gui_state.json
+
+# Local tooling (portable gh CLI, etc.)
+tools/
