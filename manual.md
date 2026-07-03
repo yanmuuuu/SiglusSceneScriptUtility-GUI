@@ -72,7 +72,7 @@ After installation, if this machine does not already have a verified user-data `
 siglus-ssu init
 ```
 
-> **Note:** Python 3.12 or later is required. The package ships with a prebuilt native Rust extension for performance-critical operations. If no wheel is available for your platform (e.g., Termux on Android), you will need to build the Rust extension from source.
+> **Note:** Python 3.12 or later is required. The package ships with a prebuilt native Rust extension for performance-critical operations. If no compatible wheel is available for your platform, you will need to build the Rust extension from source.
 >
 > `const.py` is stored in a platform-specific user data directory:
 > - **Windows:** `%APPDATA%\siglus-ssu\const.py`
@@ -211,15 +211,11 @@ siglus-ssu -lsp [--serial]
 
 #### Notes
 
-- Official entrypoint: `siglus-ssu -lsp`
-- By default, workspace-wide symbol and link scans run in parallel; use `--serial` to force serial scanning when needed. The workspace index follows the compiler dependency model: `.inc` changes rebuild the full directory index, while `.ss` changes reuse the current `.inc` context and rescan only changed scene files.
-- The LSP persists workspace indexes across sessions. A compatible persistent cache is loaded only when the `.inc` MD5 table, `.ss` file set, package version, and const profile match; individual `.ss` scan entries are reused only when that scene file's own MD5 still matches, otherwise only the changed scene files are rescanned. Unsaved editor overlays bypass the persistent index. The default cache directory is `%LOCALAPPDATA%\siglus_ssu\lsp-index` on Windows, `$XDG_CACHE_HOME/siglus_ssu/lsp-index` on Unix-like systems, or `~/.cache/siglus_ssu/lsp-index`; set `SIGLUS_SSU_LSP_CACHE_DIR` to override it.
-- Current capabilities: semantic tokens, publish/pull diagnostics, completion, hover, go to definition, find references, prepare rename when the client supports it, rename, document symbols, and live same-directory `.inc` overlay refresh for `.ss` analysis; pull diagnostics are advertised only when the client supports `textDocument/diagnostic`; the current semantic token categories include dialogue text, system elements, speaker names, and macro declarations with used/unused distinction
-- The server negotiates client position encodings, returns range-aware completion edits, respects supported completion item kinds, supports work-done progress cancellation on long scans, and validates document URIs and request shapes defensively.
-- The language service reuses the same `-c` compiler pipeline stages (`CA`, `LA`, `SA`, `MA`, `BS`) wherever they apply; semantic classification comes from that compiler-aligned analysis, while the LSP layer recovers source ranges and packages the results as semantic tokens, locations, and edits
-- The current project scope is directory-based, matching the present `-c` model for `.inc` / `.ss` joint analysis and global `.inc #command` linking
-- The service itself is editor-agnostic and can be consumed by VS Code, Neovim, Emacs, Sublime Text, Kate, Helix, or any other client that can launch an external stdio LSP server
-- The recommended editor architecture is: fallback lexical grammar, commands, tasks, and UI in the editor extension; semantic highlighting, lint, navigation, references, and rename delegated to `siglus-ssu -lsp`
+- Workspace-wide symbol and link scans run in parallel by default. With `--serial`, they run serially. A changed `.inc` rebuilds the directory index; changed `.ss` files reuse the current `.inc` context and are rescanned individually.
+- Workspace indexes persist across sessions. Cache compatibility includes the directory, `.inc` MD5 table, `.ss` file set, package version, and active `const.py` content/profile. A cached `.ss` entry is reused only when that file's MD5 still matches; unsaved editor overlays bypass the persistent index. The default cache directory is `%LOCALAPPDATA%\siglus_ssu\lsp-index` on Windows, `$XDG_CACHE_HOME/siglus_ssu/lsp-index` on Unix-like systems, or `~/.cache/siglus_ssu/lsp-index`; set `SIGLUS_SSU_LSP_CACHE_DIR` to override it.
+- Capabilities include semantic tokens, publish/pull diagnostics, completion, hover, go to definition, references, rename and conditional prepare-rename support, document symbols, and live same-directory `.inc` overlay refresh for `.ss` analysis. Pull diagnostics are advertised only when the client supports `textDocument/diagnostic`. Semantic token categories include dialogue text, system elements, speaker names, and used/unused macro declarations.
+- The server negotiates position encodings, returns range-aware completion edits, respects supported completion item kinds, supports work-done progress cancellation on long scans, and validates document URIs and request shapes.
+- Analysis reuses the applicable `-c` pipeline stages (`CA`, `LA`, `SA`, `MA`, `BS`). Its project model is directory-based, matching `.inc` / `.ss` joint analysis and global `.inc #command` linking.
 
 ---
 
@@ -252,13 +248,13 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 | `--charset ENC` | Force source file encoding. Accepted values: `jis`, `cp932`, `sjis`, `shift_jis` (all equivalent to CP932/Shift-JIS), or `utf8`, `utf-8`. If omitted, the encoding is auto-detected. |
 | `--no-os` | Skip the OS (Original Source) embedding stage. The `Scene.pck` is still generated and written out normally, but no original source files are embedded inside it. Does not affect encryption or compression of the scripts themselves. |
 | `--dat-repack` | Instead of compiling `.ss` scripts, scan the immediate files in `input_dir` for existing Siglus scene `.dat` files, copy them, and pack them directly into a `.pck` file. Useful for packing already-compiled scripts. It can only be combined with `--no-os` and/or `--no-lzss`. Cannot be combined with `--tmp` or `--test-shuffle`. |
-| `--no-angou` | Disable LZSS compression and XOR encryption. Sets `header_size = 0` and omits original source embedding. Useful for debugging or for engines without encryption. Cannot be combined with `--tmp`. |
+| `--no-angou` | Disable LZSS compression and XOR encryption, set `scn_data_exe_angou_mod = 0`, and omit original source embedding. Cannot be combined with `--tmp`. |
 | `--no-lzss` | Disable the LZSS stage while keeping the usual script encryption/header behavior. Original source chunks are not embedded in this mode. This matches the official "easy link" style output. Cannot be combined with `--tmp`. |
 | `--serial` | Disable multi-process parallel compilation and force the compile stage to run serially. Parallel compilation is enabled by default. |
 | `--max-workers N` | Maximum number of parallel worker processes. Only effective while parallel compilation is enabled; defaults to auto. |
 | `--set-shuffle SEED` | Set the initial MSVC-compatible `rand()` seed for the per-script string table shuffle. Accepts decimal or `0x...` hex. Default: `1`. Implies `--serial`. Cannot be combined with `--tmp`. |
 | `--tmp <tmp_dir>` | Use a specific persistent temporary directory. When provided, an MD5 cache (`_md5.json`) is maintained inside this directory to enable **incremental compilation** — only changed `.ss` files are recompiled on subsequent runs. Cannot be combined with `--debug`, `--dat-repack`, `--no-angou`, `--no-lzss`, `--set-shuffle`, `--test-shuffle`, `--csv`, `--gei`, or global `--const-profile`. |
-| `--test-shuffle [seed0]` | Brute-force scan all possible 32-bit MSVC `rand()` seeds to find the one that reproduces the string table order in `<test_dir>`. Optionally start the scan at `seed0`. Cannot be combined with `--tmp`. |
+| `--test-shuffle [seed0]` | Scan 32-bit MSVC `rand()` seeds from `seed0` (default `0`) through `0xFFFFFFFF` to find one that reproduces the first scene's string-table order in `<test_dir>`, then verify that seed against every scene. Cannot be combined with `--tmp`. |
 | `--csv <seed_csv>` | With `--test-shuffle`, write a CSV containing each scene object's initial seed and final seed from the serial rebuild pass. If the path is an existing directory or ends with a path separator, `test_shuffle_seeds.csv` is written inside it. Cannot be combined with `--tmp`. |
 | `--gei` | Only run the `Gameexe.ini` → `Gameexe.dat` compilation stage. The output argument is always treated as a directory. If it does not exist, it is created, and `Gameexe.dat` is written inside it. Cannot be combined with `--tmp`. |
 
@@ -324,7 +320,7 @@ siglus-ssu -c --charset utf8 --no-angou /path/to/src /path/to/out/
 
 - **Auto-encoding detection:** If `--charset` is not specified, the utility scans `.ss`, `.inc`, `.ini`, and `.dat` files for a UTF-8 BOM or kana/CJK characters. If found, `utf-8` is used; otherwise, `cp932` (Shift-JIS) is assumed.
 - **Incremental compilation:** When `--tmp` is specified, the compiler caches MD5 hashes of all `.ss` and `.inc` files. On the next run, only files whose hash has changed (or whose `.dat` is missing) are recompiled, and existing `.lzss` outputs are reused. If a scene source changes or its `.lzss` is missing, that scene's `.lzss` is regenerated. If any `.inc` file changes, a full recompile is triggered.
-- **Shuffle seed:** The compiler shuffles each `.dat` string table with an MSVC-compatible `rand()` seed. You do not need to match this for normal translation work — the engine reads strings correctly regardless of order. The `--set-shuffle` and `--test-shuffle` options are only needed if you want byte-for-byte identical binary output.
+- **Shuffle seed:** The compiler shuffles each `.dat` string table with an MSVC-compatible `rand()` seed. String order does not affect normal translation work. `--test-shuffle` finds a seed from the first scene, rebuilds every scene serially, and reports any later mismatch while continuing to generate output; use `--set-shuffle` to rebuild with a known seed.
 
 ---
 
@@ -512,7 +508,6 @@ top5_read_flags_scenes: scene_a(...), scene_b(...), ...
 
 If an embedded or adjacent `暗号.dat` is available, `.pck` analysis also appends a trailing `=== 暗号.dat ===` block and prints its first line, matching the compile-mode summary style.
 
-
 #### Word Count Output (`-a --word`)
 
 `-a --word` prints one row per decoded scene `.dat` and one row per embedded `.ss` source file. The count rule is as follows:
@@ -536,7 +531,7 @@ The CSV uses:
 
 ### `-d` / `--db` — Export and Compile `.dbs` Databases
 
-Works with `.dbs` binary database files, which store tabular data (rows and columns) used by the engine for configuration, scenario flow, or other structured data.
+Works with `.dbs` binary database files that store tabular engine data.
 
 Provides three sub-operations selected by `--x`, `--a`, or `--c`.
 
@@ -564,8 +559,8 @@ siglus-ssu -d --c [--type N] [--set-shuffle SEED] --test-shuffle [skip0] <expect
 | `--a` | **Analyze** mode: dump structural info. With two arguments, compare two `.dbs` files. |
 | `--c` | **Compile** mode: create `.dbs` from `.csv`. |
 | `--type N` | Override the `m_type` field of the generated `.dbs` (integer). Default: `1`. |
-| `--set-shuffle SEED` | Set the initial MSVC `rand()` seed for the internal string order. Accepts decimal or `0x...` hex. Default: `1`. |
-| `--test-shuffle [skip0]` | Brute-force the MSVC `rand()` skip count needed to match the padding pattern at the end of a reference `.dbs`. Optionally start from `skip0`. Single-file mode only. |
+| `--set-shuffle SEED` | Set the initial MSVC `rand()` seed for random padding bytes appended before packing. Accepts decimal or `0x...` hex. Default: `1`. |
+| `--test-shuffle [skip0]` | Search up to 16,777,216 MSVC `rand()` skip counts from `skip0` (default `0`) to match the padding pattern at the end of a reference `.dbs`. Single-file mode only. |
 
 #### Examples
 
@@ -1268,8 +1263,6 @@ siglus-ssu -p --loc (0 | 1) <input_exe> [-o output_exe] [--inplace]
 
 `--lang cjk-path` performs the same changes, then writes the official ZH path strings into an unused PE string cave and repoints active references to them. The original short strings may remain in the file as unreferenced data.
 
-`--lang` no longer accepts custom JSON. The old fixed-length `Scene.chs`, `Scene.eng`, `savechs`, `saveeng`, `Gameexe.chs`, and `Gameexe.eng` patching scheme has been removed.
-
 #### Charset Slots
 
 `--info` reports every matched `80 78 17 xx` charset compare site instead of requiring exactly two slots. The common values are:
@@ -1397,8 +1390,10 @@ This mode is intended for `.pck` archives that contain embedded original-source 
 #### Syntax
 
 ```bash
-siglus-ssu test <input_pck|input_dir>
+siglus-ssu test [--serial] <input_pck|input_dir>
 ```
+
+`--serial` disables parallel compilation during the rebuild step. Rebuilds are parallel by default.
 
 #### Workflow
 
@@ -2009,52 +2004,19 @@ One current implementation quirk is also normative: the missing-definition pass 
 
 Therefore, an implementation that reproduces only the single-file front-end but not these directory-level constraints is not fully conforming to the present `-c` language definition.
 
-
 ## Tips and Troubleshooting
-
-### Preparing `const.py`
-
-If neither the bundled source-tree copy nor the user-data copy provides a verified `const.py`, run:
-
-```bash
-siglus-ssu init
-```
 
 ### Unexpected Tokens During Compilation
 
-Unexpected tokens during compilation usually mean the nearby `.ss` text needs clearer quoting. Strings containing commas, parentheses, or Japanese quotation marks may need to be wrapped in double quotes:
+If text intended as one argument contains argument delimiters such as commas or parentheses, write it as a double-quoted string:
 
 ```
-# Before (may cause errors if the comma confuses the parser)
+# The comma splits this into additional arguments
 mes(【Hero】, Wait, I need to think about this.)
 
-# After (always safe)
+# Quoted form
 mes(【Hero】, "Wait, I need to think about this.")
 ```
-
-### Reproducing the Shuffle Seed
-
-This tool can reproduce `.dat` string-table shuffle positions with an MSVC-compatible `rand()` seed. Translation work usually **does not** need this; you only need to care about the seed when you want byte-for-byte identical output.
-
-If you want a byte-for-byte identical output (e.g., for binary diffing), first try to find the seed:
-
-```bash
-siglus-ssu -c --test-shuffle /path/to/src/ /path/to/out/ /path/to/original_dats/
-```
-
-To also record the serial seed state for each rebuilt scene, add `--csv`:
-
-```bash
-siglus-ssu -c --test-shuffle --csv /path/to/seeds.csv /path/to/src/ /path/to/out/ /path/to/original_dats/
-```
-
-If found, compile with the seed:
-
-```bash
-siglus-ssu -c --set-shuffle <found_seed> /path/to/src/ /path/to/out/
-```
-
-> **Note:** In rare cases, a single initial seed can't fully reproduce the shuffle bit-for-bit. This is likely a result of the original developers using incremental compilation (which we also support via `--tmp`), which changes the file compilation order and consequently the sequence of `rand()` calls.
 
 ### Mixed-Form String Multiplication
 
@@ -2069,35 +2031,3 @@ s[0] = "ABC" s[0] *= 3 set_namae(s[0])
 ```
 
 Do not rewrite it as `s[0] = s[0] * 3`, because that still uses the same problematic ordinary binary `*` expression form.
-
-### Pillow Dependency for G00 Mode
-
-In G00 image mode, PNG decoding, merge mode, create mode, and type0/type1/type2/type3 update paths require [Pillow](https://pillow.readthedocs.io/). Pure analysis and type3 JPEG passthrough extraction do not:
-
-```bash
-pip install pillow
-```
-
-### External Tools for Sound Trim and Playback
-
-The `--trim` feature in sound mode requires `ffmpeg` only when trimming `.owp` files, and the `--play` feature requires `ffplay`; required tools must be installed and available on the system `PATH`. Install them from https://ffmpeg.org/ or via your system package manager.
-
-The `--play` feature also requires [psutil](https://pypi.org/project/psutil/):
-
-```bash
-pip install psutil
-```
-
-### Pure Python Fallback
-
-If you encounter issues with the native Rust extension, you can force the pure Python implementation with the `--legacy` flag:
-
-```bash
-siglus-ssu --legacy -c /path/to/src/ /path/to/out.pck
-```
-
-Note that the pure Python implementation is significantly slower for large projects.
-
-### Termux / Non-prebuilt Platforms
-
-There is no prebuilt wheel available for Termux (Android). You must build the Rust extension manually with a working Rust toolchain and any platform-specific native build prerequisites your environment needs.
