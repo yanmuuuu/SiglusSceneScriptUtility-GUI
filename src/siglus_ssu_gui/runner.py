@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,21 @@ _CLI_FLAG = "--ssu-cli"
 
 def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
+
+
+def _src_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _cli_subprocess_env() -> dict[str, str] | None:
+    """源码启动时把 src 传给子进程，避免 `python -m siglus_ssu` 找不到模块。"""
+    if is_frozen():
+        return None
+    env = os.environ.copy()
+    src = str(_src_root())
+    prev = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = src if not prev else f"{src}{os.pathsep}{prev}"
+    return env
 
 
 def popen_kwargs() -> dict:
@@ -65,6 +81,7 @@ class CliRunner:
             encoding="utf-8",
             errors="replace",
             cwd=str(cwd) if cwd else None,
+            env=_cli_subprocess_env(),
             **popen_group_kwargs(),
         )
         with self._lock:

@@ -16,14 +16,26 @@
 
 感谢上游项目对 SiglusEngine 资源格式的研究与实现。使用 CLI 的完整参数说明、语言规范与故障排除，请以 upstream 手册为准。
 
+## 文档索引
+
+| 文档 | 读者 | 说明 |
+|---|---|---|
+| [instructions.md](instructions.md) | **普通用户** | 图形界面操作指南（中文，推荐首读） |
+| [SPEC.md](SPEC.md) | 开发者 | GUI 界面与功能规格 |
+| [manual_cn.md](manual_cn.md) | 进阶用户 | CLI 完整手册（中文） |
+| [manual.md](manual.md) | 进阶用户 | CLI 完整手册（英文） |
+| [changelog.md](changelog.md) | 所有人 | GUI 与上游变更记录 |
+| [UPSTREAM.md](UPSTREAM.md) | 维护者 | 上游同步与 Git 工作流 |
+
 ## 本仓库内容
 
-| 文件 | 说明 |
+| 路径 | 说明 |
 |---|---|
-| [SPEC.md](SPEC.md) | GUI 界面与功能规格（开发参考） |
-| [instructions.md](instructions.md) | 图形界面操作指南（中文） |
 | `src/siglus_ssu/` | 上游 CLI 源码（与 upstream 同步） |
 | `src/siglus_ssu_gui/` | GUI 实现（tkinter） |
+| `启动 SiglusSSU-GUI.bat` | Windows 一键启动（优先便携版 → `.venv` → 系统 Python 3.12+） |
+| `scripts/build_portable.bat` | 本地打包便携版 |
+| `packaging/` | PyInstaller 入口与便携版说明 |
 
 GUI 通过子进程调用 `siglus-ssu`，不重复实现底层逻辑，行为与命令行一致。
 
@@ -51,6 +63,16 @@ GUI 通过子进程调用 `siglus-ssu`，不重复实现底层逻辑，行为与
 
 详细操作步骤见 **[instructions.md](instructions.md)**。
 
+## 系统要求
+
+| 使用方式 | 操作系统 | Python | 说明 |
+|---|---|---|---|
+| **便携版**（推荐） | Windows 10 / 11（64 位） | **不需要** | 解压后双击 `SiglusSSU-GUI.exe` |
+| **源码 / 开发** | Windows / macOS / Linux | **3.12 或更高** | 3.11 及以下无法运行；见下方安装节 |
+| **自行打包便携版** | Windows | **3.12+** | 仅需打包时可不装 Rust（纯 Python 包） |
+
+> 从仓库根目录双击 **`启动 SiglusSSU-GUI.bat`**：若已存在 `dist\SiglusSSU-GUI\`，会优先启动便携版；否则尝试本机 Python 3.12+。
+
 ## 便携版（推荐，无需安装 Python）
 
 像 **FModel** 一样：下载 → 解压到桌面 → 双击运行。
@@ -68,26 +90,39 @@ GUI 通过子进程调用 `siglus-ssu`，不重复实现底层逻辑，行为与
 
 ### 自行打包便携版（开发者）
 
-需要 Python 3.12+ 与 [Rust](https://rustup.rs/)，在项目根目录执行：
+需要 **Python 3.12+**；[Rust](https://rustup.rs/) **可选**（有则打包原生加速，无则打纯 Python 便携版）。在项目根目录执行：
 
 ```bat
 scripts\build_portable.bat
 ```
 
-产出：`dist/SiglusSSU-GUI/`（可复制到桌面）与 `dist/SiglusSSU-GUI-portable.zip`。
+或 `py -3.12 scripts\build_portable.py`（加 `--rust` 强制编译 Rust 扩展）。
+
+产出：`dist/SiglusSSU-GUI/`（可复制到桌面）与 `dist/SiglusSSU-GUI-portable.zip`（已在 `.gitignore`，不提交仓库）。
 
 ## 安装（开发者 / 源码）
 
 ### 前提条件
 
-- Python 3.12+
+- **Python 3.12 或更高**（[python.org](https://www.python.org/downloads/) 下载；安装时勾选 **Add python.exe to PATH**）
+  - 3.11、3.10 等旧版本**不支持**，与上游 CLI 要求一致
 - [uv](https://github.com/astral-sh/uv)（推荐，与 upstream 一致）
-- Rust 工具链（构建原生加速扩展，见 [rustup.rs](https://rustup.rs/)）
+- Rust 工具链（可选；仅构建带 Rust 加速的 wheel 时需要，见 [rustup.rs](https://rustup.rs/)）
+
+### Windows 快速启动（克隆仓库后）
+
+```bat
+启动 SiglusSSU-GUI.bat
+```
+
+逻辑：优先 `dist\SiglusSSU-GUI\SiglusSSU-GUI.exe`（便携版）→ 否则 `.venv\Scripts\python.exe`（已 `uv sync` 时）→ 再检测 `py -3.12` / `python` 是否 ≥ 3.12。
+
+若提示「未能启动 GUI」，请运行 `scripts\build_portable.bat` 生成便携版，或安装 Python 3.12+ 后执行 `uv sync`，勿使用 3.11 及以下旧版 Python。
 
 ### 从源码
 
 ```bash
-git clone <本仓库地址>
+git clone https://github.com/yanmuuuu/SiglusSceneScriptUtility-GUI.git
 cd SiglusSceneScriptUtility-GUI
 
 uv sync

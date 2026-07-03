@@ -1,6 +1,6 @@
 # SiglusSceneScriptUtility GUI 规格说明
 
-**版本：** 0.2  
+**版本：** 0.2.1  
 **语言：** 仅中文界面  
 **上游 CLI：** [siglus-ssu](https://github.com/Jirehlov/SiglusSceneScriptUtility)  
 **用户手册：** [instructions.md](instructions.md)  
@@ -25,10 +25,10 @@
 
 | 项目 | 说明 |
 |---|---|
-| Python | ≥ 3.12 |
+| Python | **便携版：不需要。** 源码/打包：**≥ 3.12**（与上游 CLI 一致，3.11 及以下不支持） |
 | 依赖 | 标准库 `tkinter` / `ttk`；无第三方 GUI 库 |
 | 调用 | `subprocess` + 后台线程读 stdout；列表形式传参 |
-| 平台 | Windows 优先（Segoe UI、无控制台窗口）；其他平台回退系统字体 |
+| 平台 | Windows 优先（Segoe UI、无控制台窗口）；界面为 **FModel 风格深色主题**（`clam` + 自定义配色）；左侧导航与表单区支持**细滚动条 + 滚轮**；其他平台回退系统字体 |
 | 性能 | 日志队列 + 定时 flush；日志上限约 40 万字符；LSP stdout 后台 drain |
 
 ---
@@ -72,7 +72,7 @@
 
 | 控件 | 行为 |
 |---|---|
-| **浏览…** | 文件 / 文件夹 / 另存为；记住上次目录 |
+| **浏览…** | 按字段类型显示「选文件」「选文件夹」或「另存为」；操作切换时自动调整；记住上次目录；不再连续弹出两个对话框 |
 | **路径框** | 可编辑，支持粘贴 |
 | **字段 hint** | 标签下方灰色小字说明格式与留空规则 |
 | **开始执行** | 校验 → 禁用按钮 → 不确定进度条 → 流式日志 |
@@ -156,17 +156,21 @@
 
 ```
 src/siglus_ssu_gui/
-├── __main__.py
+├── __main__.py         # 入口；multiprocessing.freeze_support
 ├── app.py              # 主窗口、导航、快捷键
-├── theme.py            # ttk 样式
+├── theme.py            # FModel 深色主题、高 DPI
+├── nav.py              # NavItem / NavGroup 侧栏组件
+├── scroll.py           # VerticalScrollArea、滚轮绑定
 ├── widgets.py          # PathRow、LogPanel、Section、CollapsibleSection
-├── runner.py           # CliRunner
+├── runner.py           # CliRunner（子进程 + PYTHONPATH）
 ├── process_util.py
 ├── const_check.py
 └── panels/
     ├── base.py
     └── all_panels.py   # 15 面板 + PANEL_HINTS + PANEL_NAV_GROUPS
 ```
+
+便携版入口：`packaging/gui_entry.py`（PyInstaller 打包用，含多进程防重复启动 GUI）。
 
 ---
 
@@ -191,3 +195,4 @@ src/siglus_ssu_gui/
 |---|---|---|
 | 0.1 | 2026-07-03 | 初稿：全命令面板 |
 | 0.2 | 2026-07-03 | 分组导航、分区表单、日志批量刷新、懒加载面板、动态字段、文档重写 |
+| 0.2.1 | 2026-07-03 | 路径浏览拆分；g00 合并模式；FModel 深色主题；侧栏/表单滚动；多进程子窗口修复；启动脚本与文档 |

@@ -2,6 +2,21 @@
 
 本文件记录 **SiglusSceneScriptUtility GUI** 仓库的变更。上游 CLI 历史版本见下方「上游变更记录」或 [UPSTREAM.md](UPSTREAM.md)。
 
+## [GUI v0.2.1] - 2026-07-03
+
+- **界面**：FModel 风格深色主题、高 DPI；分组侧栏（`nav.py`）与可滚动区域（`scroll.py`）；细滚动条与滚轮支持。
+- **路径选择**：`PathRow` 拆分为「选文件 / 选文件夹 / 另存为」；各面板按 CLI 语义动态切换浏览模式。
+- **面板**：图片 g00 合并模式隐藏多余输入、输出固定为文件夹。
+- **稳定性**：修复便携版多进程子窗口重复启动 GUI；`ttk.Panedwindow` 兼容性修复。
+- **启动**：新增 `启动 SiglusSSU-GUI.bat`（便携版 → `.venv` → Python 3.12+）；完善 README / instructions / SPEC 系统要求说明。
+- **清理**：移除冗余启动脚本与一次性 `first_push.ps1`。
+
+## [GUI v0.2.0] - 2026-07-03
+
+- 分组侧边导航 + 功能说明；路径 / 选项分区；高级参数默认折叠。
+- 日志批量刷新（约 80ms）；面板懒加载；动态隐藏无关字段。
+- 重写 [SPEC.md](SPEC.md)、[instructions.md](instructions.md)。
+
 ## [GUI v0.1.0] - 2026-07-03
 
 - 基于 [Jirehlov/SiglusSceneScriptUtility](https://github.com/Jirehlov/SiglusSceneScriptUtility) v0.3.7 创建 GUI 分支。

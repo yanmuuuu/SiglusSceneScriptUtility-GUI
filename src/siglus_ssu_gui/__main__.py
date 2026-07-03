@@ -7,10 +7,15 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import sys
 
 
 def main() -> None:
+    multiprocessing.freeze_support()
+    if multiprocessing.parent_process() is not None:
+        return
+
     if len(sys.argv) >= 2 and sys.argv[1] == "--ssu-cli":
         sys.argv = ["siglus-ssu", *sys.argv[2:]]
         from siglus_ssu.__main__ import main as cli_main

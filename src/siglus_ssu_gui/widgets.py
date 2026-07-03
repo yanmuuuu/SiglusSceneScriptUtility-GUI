@@ -7,9 +7,54 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 from typing import Literal, NamedTuple
 
-from .theme import mono_font
+from .scroll import bind_listbox_scroll, bind_text_scroll
+from .theme import (
+    ACCENT,
+    BG,
+    BG_INPUT,
+    BG_LOG,
+    BG_PANEL,
+    BORDER,
+    FG,
+    FG_MUTED,
+    FG_SECONDARY,
+    SELECT_BG,
+    make_entry,
+    mono_font,
+    ui_font,
+)
 
-PathMode = Literal["file", "dir", "save", "either"]
+PathMode = Literal["file", "dir", "save", "file_or_dir", "save_or_dir"]
+
+G00_FILETYPES = [
+    ("G00 图片", "*.g00"),
+    ("所有文件", "*.*"),
+]
+IMAGE_FILETYPES = [
+    ("图片", "*.png;*.jpg;*.jpeg;*.bmp;*.webp"),
+    ("JSON 布局", "*.json;*.jsonc"),
+    ("所有文件", "*.*"),
+]
+AUDIO_FILETYPES = [
+    ("音频", "*.ovk;*.owp;*.nwa;*.ogg"),
+    ("所有文件", "*.*"),
+]
+VIDEO_FILETYPES = [
+    ("视频", "*.omv;*.ogv"),
+    ("所有文件", "*.*"),
+]
+DBS_FILETYPES = [
+    ("数据库", "*.dbs"),
+    ("所有文件", "*.*"),
+]
+PCK_FILETYPES = [
+    ("PCK 文件", "*.pck"),
+    ("所有文件", "*.*"),
+]
+DAT_FILETYPES = [
+    ("DAT 文件", "*.dat"),
+    ("所有文件", "*.*"),
+]
 
 _last_browse_dir: str | None = None
 _LOG_MAX_CHARS = 400_000
@@ -29,9 +74,9 @@ def _initial_dir() -> str | None:
 
 class Section(ttk.LabelFrame):
     def __init__(self, master: tk.Misc, title: str) -> None:
-        super().__init__(master, text=title, style="Section.TLabelframe", padding=(12, 8))
-        self.body = ttk.Frame(self)
-        self.body.pack(fill=tk.BOTH, expand=True)
+        super().__init__(master, text=title, style="Section.TLabelframe", padding=(16, 12))
+        self.body = ttk.Frame(self, style="SectionBody.TFrame")
+        self.body.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
 
 class CollapsibleSection(ttk.Frame):
@@ -72,16 +117,28 @@ class PathRow(ttk.Frame):
         self.filetypes = filetypes or [("所有文件", "*.*")]
         head = ttk.Frame(self)
         head.pack(fill=tk.X)
-        ttk.Label(head, text=label, width=12).pack(side=tk.LEFT, anchor=tk.W)
+        self._label = ttk.Label(head, text=label, width=12, style="Field.TLabel")
+        self._label.pack(side=tk.LEFT, anchor=tk.W)
         self.var = tk.StringVar()
-        ttk.Entry(head, textvariable=self.var).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 6)
+        make_entry(head, self.var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8), ipady=4
         )
-        ttk.Button(head, text="浏览…", command=self._browse, width=8).pack(side=tk.LEFT)
+        browse_box = ttk.Frame(head)
+        browse_box.pack(side=tk.LEFT)
+        self._file_btn = ttk.Button(
+            browse_box, text="文件", style="Secondary.TButton", command=self._browse_file, width=6
+        )
+        self._dir_btn = ttk.Button(
+            browse_box, text="文件夹", style="Secondary.TButton", command=self._browse_dir, width=7
+        )
+        self._save_btn = ttk.Button(
+            browse_box, text="另存为", style="Secondary.TButton", command=self._browse_save, width=7
+        )
+        self._hint_label: ttk.Label | None = None
         if hint:
-            ttk.Label(self, text=hint, style="Hint.TLabel", wraplength=560).pack(
-                anchor=tk.W, padx=(12, 0), pady=(2, 0)
-            )
+            self._hint_label = ttk.Label(self, text=hint, style="Hint.TLabel", wraplength=600)
+            self._hint_label.pack(anchor=tk.W, padx=(14, 0), pady=(4, 0))
+        self.set_mode(mode)
 
     def get(self) -> str:
         return self.var.get().strip()
@@ -89,20 +146,57 @@ class PathRow(ttk.Frame):
     def set(self, value: str) -> None:
         self.var.set(value)
 
-    def _browse(self) -> None:
+    def set_mode(
+        self,
+        mode: PathMode,
+        *,
+        filetypes: list[tuple[str, str]] | None = None,
+    ) -> None:
+        self.mode = mode
+        if filetypes is not None:
+            self.filetypes = filetypes
+        for btn in (self._file_btn, self._dir_btn, self._save_btn):
+            btn.pack_forget()
+        if mode == "file":
+            self._file_btn.pack(side=tk.LEFT)
+        elif mode == "dir":
+            self._dir_btn.pack(side=tk.LEFT)
+        elif mode == "save":
+            self._save_btn.pack(side=tk.LEFT)
+        elif mode == "file_or_dir":
+            self._file_btn.pack(side=tk.LEFT)
+            self._dir_btn.pack(side=tk.LEFT, padx=(4, 0))
+        elif mode == "save_or_dir":
+            self._save_btn.pack(side=tk.LEFT)
+            self._dir_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+    def set_hint(self, hint: str) -> None:
+        if self._hint_label is not None:
+            self._hint_label.configure(text=hint)
+
+    def set_label(self, label: str) -> None:
+        self._label.configure(text=label)
+
+    def _browse_file(self) -> None:
         initial = _initial_dir()
         kw = {"initialdir": initial} if initial else {}
-        path = ""
-        if self.mode == "dir":
-            path = filedialog.askdirectory(**kw)
-        elif self.mode == "save":
-            path = filedialog.asksaveasfilename(filetypes=self.filetypes, **kw)
-        elif self.mode == "either":
-            path = filedialog.askopenfilename(filetypes=self.filetypes, **kw)
-            if not path:
-                path = filedialog.askdirectory(**kw)
-        else:
-            path = filedialog.askopenfilename(filetypes=self.filetypes, **kw)
+        path = filedialog.askopenfilename(filetypes=self.filetypes, **kw)
+        if path:
+            self.var.set(path)
+            _remember_path(path)
+
+    def _browse_dir(self) -> None:
+        initial = _initial_dir()
+        kw = {"initialdir": initial} if initial else {}
+        path = filedialog.askdirectory(**kw)
+        if path:
+            self.var.set(path)
+            _remember_path(path)
+
+    def _browse_save(self) -> None:
+        initial = _initial_dir()
+        kw = {"initialdir": initial} if initial else {}
+        path = filedialog.asksaveasfilename(filetypes=self.filetypes, **kw)
         if path:
             self.var.set(path)
             _remember_path(path)
@@ -128,14 +222,14 @@ class TextRow(ttk.Frame):
         super().__init__(master)
         head = ttk.Frame(self)
         head.pack(fill=tk.X)
-        ttk.Label(head, text=label, width=12).pack(side=tk.LEFT, anchor=tk.W)
+        ttk.Label(head, text=label, width=12, style="Field.TLabel").pack(side=tk.LEFT, anchor=tk.W)
         self.var = tk.StringVar()
-        ttk.Entry(head, textvariable=self.var).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0)
+        make_entry(head, self.var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0), ipady=4
         )
         if hint:
-            ttk.Label(self, text=hint, style="Hint.TLabel", wraplength=560).pack(
-                anchor=tk.W, padx=(12, 0), pady=(2, 0)
+            ttk.Label(self, text=hint, style="Hint.TLabel", wraplength=600).pack(
+                anchor=tk.W, padx=(14, 0), pady=(4, 0)
             )
 
     def get(self) -> str:
@@ -147,7 +241,7 @@ class AngouRow(PathRow):
         super().__init__(
             master,
             "密钥来源",
-            mode="either",
+            mode="file_or_dir",
             hint="可选。游戏根目录、angou=明文、key=十六进制；提取失败时再填。",
         )
 
@@ -158,24 +252,49 @@ class AngouRow(PathRow):
 
 
 class FileListRow(ttk.Frame):
-    def __init__(self, master: tk.Misc, label: str) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        label: str,
+        *,
+        filetypes: list[tuple[str, str]] | None = None,
+    ) -> None:
         super().__init__(master)
-        ttk.Label(self, text=label).pack(anchor=tk.W)
+        self.filetypes = filetypes or [("所有文件", "*.*")]
+        ttk.Label(self, text=label, style="Field.TLabel").pack(anchor=tk.W, pady=(0, 4))
         box = ttk.Frame(self)
         box.pack(fill=tk.BOTH, expand=True)
-        self.listbox = tk.Listbox(box, height=4, selectmode=tk.EXTENDED, font=mono_font(9))
-        scroll = ttk.Scrollbar(box, orient=tk.VERTICAL, command=self.listbox.yview)
+        self.listbox = tk.Listbox(
+            box,
+            height=4,
+            selectmode=tk.EXTENDED,
+            font=mono_font(11),
+            bg=BG_INPUT,
+            fg=FG,
+            selectbackground=SELECT_BG,
+            selectforeground=FG,
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
+        )
+        scroll = ttk.Scrollbar(box, orient=tk.VERTICAL, style="Thin.Vertical.TScrollbar", command=self.listbox.yview)
         self.listbox.configure(yscrollcommand=scroll.set)
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        bind_listbox_scroll(self.listbox)
         btns = ttk.Frame(self)
         btns.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(btns, text="添加文件…", command=self._add).pack(side=tk.LEFT)
-        ttk.Button(btns, text="移除选中", command=self._remove).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="添加文件", style="Secondary.TButton", command=self._add).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(btns, text="移除选中", style="Secondary.TButton", command=self._remove).pack(
+            side=tk.LEFT, padx=6
+        )
 
     def _add(self) -> None:
         initial = _initial_dir()
-        kw = {"initialdir": initial} if initial else {}
+        kw = {"initialdir": initial, "filetypes": self.filetypes} if initial else {"filetypes": self.filetypes}
         paths = filedialog.askopenfilenames(**kw)
         for p in paths:
             self.listbox.insert(tk.END, p)
@@ -204,9 +323,11 @@ class LogPanel(ttk.Frame):
 
         header = ttk.Frame(self)
         header.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(header, text="运行日志", font=("", 10, "bold")).pack(side=tk.LEFT)
-        ttk.Button(header, text="清空", command=self.clear, width=8).pack(side=tk.RIGHT)
-        ttk.Label(header, text="右键可复制", style="Hint.TLabel").pack(side=tk.RIGHT, padx=8)
+        ttk.Label(header, text="运行日志", style="LogTitle.TLabel").pack(side=tk.LEFT)
+        ttk.Button(header, text="清空", style="Secondary.TButton", command=self.clear, width=8).pack(
+            side=tk.RIGHT
+        )
+        ttk.Label(header, text="右键可复制", style="Hint.TLabel").pack(side=tk.RIGHT, padx=10)
 
         box = ttk.Frame(self)
         box.pack(fill=tk.BOTH, expand=True)
@@ -214,22 +335,29 @@ class LogPanel(ttk.Frame):
             box,
             height=12,
             wrap=tk.NONE,
-            font=mono_font(10),
-            bg="#1e1e1e",
-            fg="#d4d4d4",
-            insertbackground="#d4d4d4",
+            font=mono_font(11),
+            bg=BG_LOG,
+            fg=FG_SECONDARY,
+            insertbackground=FG,
             relief=tk.FLAT,
-            padx=8,
-            pady=6,
+            padx=10,
+            pady=8,
+            spacing1=1,
+            spacing3=1,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
         )
-        scroll_y = ttk.Scrollbar(box, orient=tk.VERTICAL, command=self.text.yview)
-        scroll_x = ttk.Scrollbar(box, orient=tk.HORIZONTAL, command=self.text.xview)
+        scroll_y = ttk.Scrollbar(box, orient=tk.VERTICAL, style="Thin.Vertical.TScrollbar", command=self.text.yview)
+        scroll_x = ttk.Scrollbar(box, orient=tk.HORIZONTAL, style="Thin.Horizontal.TScrollbar", command=self.text.xview)
         self.text.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         self.text.grid(row=0, column=0, sticky="nsew")
         scroll_y.grid(row=0, column=1, sticky="ns")
         scroll_x.grid(row=1, column=0, sticky="ew")
         box.rowconfigure(0, weight=1)
         box.columnconfigure(0, weight=1)
+
+        bind_text_scroll(self.text)
 
         self.text.bind("<Key>", lambda _e: "break")
         menu = tk.Menu(self.text, tearoff=0)
@@ -297,10 +425,10 @@ def labeled_combo(
     command: Callable[[], None] | None = None,
 ) -> ttk.Combobox:
     row = ttk.Frame(parent)
-    row.pack(fill=tk.X, pady=3)
-    ttk.Label(row, text=label, width=12).pack(side=tk.LEFT, anchor=tk.W)
-    combo = ttk.Combobox(row, values=values, state="readonly")
-    combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+    row.pack(fill=tk.X, pady=4)
+    ttk.Label(row, text=label, width=12, style="Field.TLabel").pack(side=tk.LEFT, anchor=tk.W)
+    combo = ttk.Combobox(row, values=values, state="readonly", font=ui_font())
+    combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
     if values:
         combo.current(0)
     if command:
@@ -315,13 +443,18 @@ def labeled_radio(
     *,
     command: Callable[[], None] | None = None,
 ) -> tk.StringVar:
-    box = ttk.LabelFrame(parent, text=label, style="Section.TLabelframe", padding=(10, 6))
-    box.pack(fill=tk.X, pady=4)
+    box = ttk.LabelFrame(parent, text=label, style="Section.TLabelframe", padding=(14, 10))
+    box.pack(fill=tk.X, pady=8)
     var = tk.StringVar(value=options[0][0])
     for value, text in options:
-        ttk.Radiobutton(box, text=text, value=value, variable=var, command=command).pack(
-            anchor=tk.W, pady=1
-        )
+        ttk.Radiobutton(
+            box,
+            text=text,
+            value=value,
+            variable=var,
+            command=command,
+            style="Option.TRadiobutton",
+        ).pack(anchor=tk.W, pady=2, padx=2)
     return var
 
 
@@ -339,8 +472,11 @@ class CheckOption(NamedTuple):
         self.widget.pack_forget()
 
 
-def labeled_check(parent: tk.Misc, text: str, *, default: bool = False) -> CheckOption:
+def labeled_check(
+    parent: tk.Misc, text: str, *, default: bool = False, in_section: bool = True
+) -> CheckOption:
     var = tk.BooleanVar(value=default)
-    widget = ttk.Checkbutton(parent, text=text, variable=var)
-    widget.pack(anchor=tk.W, pady=2)
+    style = "Option.TCheckbutton" if in_section else "TCheckbutton"
+    widget = ttk.Checkbutton(parent, text=text, variable=var, style=style)
+    widget.pack(anchor=tk.W, pady=3, padx=2)
     return CheckOption(var=var, widget=widget)

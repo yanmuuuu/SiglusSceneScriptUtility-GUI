@@ -7,11 +7,18 @@ from tkinter import ttk
 
 from ..widgets import (
     AngouRow,
+    AUDIO_FILETYPES,
     CollapsibleSection,
+    DBS_FILETYPES,
+    DAT_FILETYPES,
     FileListRow,
+    G00_FILETYPES,
+    IMAGE_FILETYPES,
+    PCK_FILETYPES,
     PathRow,
     Section,
     TextRow,
+    VIDEO_FILETYPES,
     labeled_check,
     labeled_combo,
     labeled_radio,
@@ -38,8 +45,9 @@ class ExtractPanel(BasePanel):
         self.input_row = PathRow(
             paths.body,
             "输入",
-            mode="either",
-            hint="① .pck  ② 含 .dat 的文件夹或 .pck  ③ Gameexe.dat 或所在目录",
+            mode="file",
+            filetypes=PCK_FILETYPES,
+            hint="选择要提取的 .pck 文件",
         )
         self.input_row.pack(fill=tk.X, pady=4)
         self.output_row = PathRow(
@@ -57,8 +65,16 @@ class ExtractPanel(BasePanel):
         op = self.op.get()
         if op == "pck":
             self.disam.pack(anchor=tk.W, pady=1)
+            self.input_row.set_mode("file", filetypes=PCK_FILETYPES)
+            self.input_row.set_hint("选择要提取的 .pck 文件")
+        elif op == "disam":
+            self.disam.pack_forget()
+            self.input_row.set_mode("file_or_dir", filetypes=PCK_FILETYPES)
+            self.input_row.set_hint("含 .dat 的文件夹，或原始 .pck 文件")
         else:
             self.disam.pack_forget()
+            self.input_row.set_mode("file_or_dir", filetypes=DAT_FILETYPES)
+            self.input_row.set_hint("Gameexe.dat 或其所在目录")
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         op = self.op.get()
@@ -91,6 +107,7 @@ class CompilePanel(BasePanel):
             parent,
             "操作类型",
             [("std", "标准编译（.ss → .pck）"), ("gei", "仅编译 Gameexe.dat")],
+            command=self._on_op,
         )
         paths = Section(parent, "路径")
         paths.pack(fill=tk.X, pady=4)
@@ -104,8 +121,8 @@ class CompilePanel(BasePanel):
         self.output_row = PathRow(
             paths.body,
             "输出",
-            mode="save",
-            filetypes=[("PCK 文件", "*.pck"), ("所有文件", "*.*")],
+            mode="save_or_dir",
+            filetypes=PCK_FILETYPES,
             hint="填写 .pck 路径，或选择已存在目录（将生成 Scene.pck）",
         )
         self.output_row.pack(fill=tk.X, pady=4)
@@ -121,6 +138,15 @@ class CompilePanel(BasePanel):
         self.no_lzss = labeled_check(adv.body, "禁用 LZSS（--no-lzss）")
         self.tmp_row = PathRow(adv.body, "增量缓存目录", mode="dir", hint="填写则启用 --tmp（与 --debug 互斥）")
         self.tmp_row.pack(fill=tk.X, pady=4)
+        self._on_op()
+
+    def _on_op(self) -> None:
+        if self.op.get() == "gei":
+            self.output_row.set_mode("dir")
+            self.output_row.set_hint("输出目录（将写入 Gameexe.dat）")
+        else:
+            self.output_row.set_mode("save_or_dir", filetypes=PCK_FILETYPES)
+            self.output_row.set_hint("填写 .pck 路径，或选择已存在目录（将生成 Scene.pck）")
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         if err := self.input_row.validate_exists(required=True, as_dir=True):
@@ -171,9 +197,13 @@ class AnalyzePanel(BasePanel):
         )
         paths = Section(parent, "路径")
         paths.pack(fill=tk.X, pady=4)
-        self.in1 = PathRow(paths.body, "输入文件 1", mode="file")
+        self.in1 = PathRow(
+            paths.body, "输入文件 1", mode="file", filetypes=PCK_FILETYPES
+        )
         self.in1.pack(fill=tk.X, pady=4)
-        self.in2 = PathRow(paths.body, "输入文件 2", mode="file")
+        self.in2 = PathRow(
+            paths.body, "输入文件 2", mode="file", filetypes=PCK_FILETYPES
+        )
         self.in2.pack(fill=tk.X, pady=4)
         self.csv_out = PathRow(
             paths.body,
@@ -270,44 +300,82 @@ class G00Panel(BasePanel):
         )
         paths = Section(parent, "路径")
         paths.pack(fill=tk.X, pady=4)
-        self.input_row = PathRow(paths.body, "输入", mode="either")
+        self.input_row = PathRow(
+            paths.body,
+            "输入",
+            mode="file",
+            filetypes=G00_FILETYPES,
+            hint="选择单个 .g00 文件",
+        )
         self.input_row.pack(fill=tk.X, pady=4)
-        self.merge_list = FileListRow(paths.body, "合并文件列表（--m）")
+        self.merge_list = FileListRow(
+            paths.body, "合并文件列表（--m）", filetypes=G00_FILETYPES
+        )
         self.merge_list.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(paths.body, "输出", mode="either")
+        self.output_row = PathRow(
+            paths.body,
+            "输出目录",
+            mode="dir",
+            hint="提取出的 PNG/JPEG 将写入此文件夹",
+        )
         self.output_row.pack(fill=tk.X, pady=4)
         opts = Section(parent, "选项")
         opts.pack(fill=tk.X, pady=4)
         self.trim = labeled_check(opts.body, "裁剪透明边（--trim）")
         self.type_row = TextRow(opts.body, "g00 类型", hint="创建模式：--type N")
         self.type_row.pack(fill=tk.X, pady=4)
-        self.refer_row = PathRow(opts.body, "参考 g00", mode="file")
+        self.refer_row = PathRow(
+            opts.body,
+            "参考 g00",
+            mode="file",
+            filetypes=G00_FILETYPES,
+            hint="创建/更新模式可选",
+        )
         self.refer_row.pack(fill=tk.X, pady=4)
         self._on_op()
 
     def _on_op(self) -> None:
         op = self.op.get()
         if op.startswith("分析"):
+            self.input_row.pack(fill=tk.X, pady=4)
+            self.input_row.set_mode("file", filetypes=G00_FILETYPES)
+            self.input_row.set_hint("选择单个 .g00 文件（结果在下方日志）")
             self.output_row.pack_forget()
             self.merge_list.pack_forget()
             self.trim.pack_forget()
             self.type_row.pack_forget()
             self.refer_row.pack_forget()
         elif op.startswith("提取"):
+            self.input_row.pack(fill=tk.X, pady=4)
+            self.input_row.set_mode("file_or_dir", filetypes=G00_FILETYPES)
+            self.input_row.set_hint("单个 .g00，或包含多个 .g00 的文件夹")
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("dir")
+            self.output_row.set_label("输出目录")
+            self.output_row.set_hint("提取出的 PNG/JPEG 将写入此文件夹")
             self.merge_list.pack_forget()
             self.trim.widget.pack(anchor=tk.W, pady=2)
             self.type_row.pack_forget()
             self.refer_row.pack_forget()
         elif op.startswith("合并"):
+            self.input_row.pack_forget()
             self.merge_list.pack(fill=tk.X, pady=4)
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("dir")
+            self.output_row.set_label("输出目录")
+            self.output_row.set_hint("合并后的 PNG 将写入此文件夹")
             self.trim.widget.pack(anchor=tk.W, pady=2)
             self.type_row.pack_forget()
             self.refer_row.pack_forget()
         else:
+            self.input_row.pack(fill=tk.X, pady=4)
+            self.input_row.set_mode("file_or_dir", filetypes=IMAGE_FILETYPES)
+            self.input_row.set_hint("PNG/JPEG/JSON 布局，或包含这些文件的文件夹")
             self.merge_list.pack_forget()
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("save_or_dir", filetypes=G00_FILETYPES)
+            self.output_row.set_label("输出")
+            self.output_row.set_hint("可指定 .g00 文件路径，或选择输出文件夹；留空则使用默认位置")
             self.trim.pack_forget()
             self.type_row.pack(fill=tk.X, pady=4)
             self.refer_row.pack(fill=tk.X, pady=4)
@@ -377,12 +445,18 @@ class SoundPanel(BasePanel):
         )
         paths = Section(parent, "路径")
         paths.pack(fill=tk.X, pady=4)
-        self.input_row = PathRow(paths.body, "输入", mode="either")
+        self.input_row = PathRow(
+            paths.body, "输入", mode="file_or_dir", filetypes=AUDIO_FILETYPES
+        )
         self.input_row.pack(fill=tk.X, pady=4)
         self.output_row = PathRow(paths.body, "输出目录", mode="dir")
         self.output_row.pack(fill=tk.X, pady=4)
         self.gameexe_row = PathRow(
-            paths.body, "Gameexe.dat", mode="file", hint="提取/播放时可选，用于正确解密"
+            paths.body,
+            "Gameexe.dat",
+            mode="file",
+            filetypes=DAT_FILETYPES,
+            hint="提取/播放时可选，用于正确解密",
         )
         self.gameexe_row.pack(fill=tk.X, pady=4)
         self.angou = AngouRow(paths.body)
@@ -392,16 +466,26 @@ class SoundPanel(BasePanel):
     def _on_op(self) -> None:
         op = self.op.get()
         if op.startswith("分析"):
+            self.input_row.set_mode("file", filetypes=AUDIO_FILETYPES)
+            self.input_row.set_hint("选择 .ovk / .owp / .nwa 文件")
             self.output_row.pack_forget()
             self.gameexe_row.pack_forget()
         elif op.startswith("播放"):
+            self.input_row.set_mode("file_or_dir", filetypes=AUDIO_FILETYPES)
+            self.input_row.set_hint("单个音频文件，或包含多个音频的文件夹")
             self.output_row.pack_forget()
             self.gameexe_row.pack(fill=tk.X, pady=4)
         elif op.startswith("提取"):
+            self.input_row.set_mode("file_or_dir", filetypes=AUDIO_FILETYPES)
+            self.input_row.set_hint("游戏音频目录或单个音频包文件")
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("dir")
             self.gameexe_row.pack(fill=tk.X, pady=4)
         else:
+            self.input_row.set_mode("file", filetypes=[("OGG", "*.ogg"), ("所有文件", "*.*")])
+            self.input_row.set_hint("选择要编码的 .ogg 文件")
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("dir")
             self.gameexe_row.pack_forget()
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
@@ -449,24 +533,42 @@ class VideoPanel(BasePanel):
         )
         paths = Section(parent, "路径")
         paths.pack(fill=tk.X, pady=4)
-        self.input_row = PathRow(paths.body, "输入", mode="either")
+        self.input_row = PathRow(
+            paths.body, "输入", mode="file_or_dir", filetypes=VIDEO_FILETYPES
+        )
         self.input_row.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(paths.body, "输出", mode="either")
+        self.output_row = PathRow(paths.body, "输出", mode="dir")
         self.output_row.pack(fill=tk.X, pady=4)
-        self.refer_row = PathRow(paths.body, "参考 omv", mode="file", hint="编码模式可选")
+        self.refer_row = PathRow(
+            paths.body,
+            "参考 omv",
+            mode="file",
+            filetypes=VIDEO_FILETYPES,
+            hint="编码模式可选",
+        )
         self.refer_row.pack(fill=tk.X, pady=4)
         self._on_op()
 
     def _on_op(self) -> None:
         op = self.op.get()
         if op.startswith("分析"):
+            self.input_row.set_mode("file", filetypes=VIDEO_FILETYPES)
+            self.input_row.set_hint("选择 .omv 文件")
             self.output_row.pack_forget()
             self.refer_row.pack_forget()
         elif op.startswith("提取"):
+            self.input_row.set_mode("file", filetypes=VIDEO_FILETYPES)
+            self.input_row.set_hint("选择 .omv 文件")
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("dir")
+            self.output_row.set_hint("提取出的视频将写入此文件夹")
             self.refer_row.pack_forget()
         else:
+            self.input_row.set_mode("file", filetypes=[("OGV", "*.ogv"), ("所有文件", "*.*")])
+            self.input_row.set_hint("选择要编码的 .ogv 文件")
             self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("save_or_dir", filetypes=VIDEO_FILETYPES)
+            self.output_row.set_hint("可指定输出 .omv 文件，或选择输出文件夹")
             self.refer_row.pack(fill=tk.X, pady=4)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
@@ -499,13 +601,40 @@ class DbPanel(BasePanel):
     TITLE = "数据库"
 
     def _build(self, parent: ttk.Frame) -> None:
-        self.op = labeled_combo(parent, "操作", ["导出 --x", "分析 --a", "编译 --c"])
-        self.input_row = PathRow(parent, "输入", mode="either")
+        self.op = labeled_combo(
+            parent, "操作", ["导出 --x", "分析 --a", "编译 --c"], command=self._on_op
+        )
+        self.input_row = PathRow(
+            parent, "输入", mode="file_or_dir", filetypes=DBS_FILETYPES
+        )
         self.input_row.pack(fill=tk.X, pady=4)
-        self.output_row = PathRow(parent, "输出", mode="either")
+        self.output_row = PathRow(parent, "输出", mode="dir")
         self.output_row.pack(fill=tk.X, pady=4)
         self.type_row = TextRow(parent, "数据库类型")
         self.type_row.pack(fill=tk.X, pady=4)
+        self._on_op()
+
+    def _on_op(self) -> None:
+        op = self.op.get()
+        if op.startswith("导出"):
+            self.input_row.set_mode("file_or_dir", filetypes=DBS_FILETYPES)
+            self.input_row.set_hint(".dbs 文件，或包含多个 .dbs 的文件夹")
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("dir")
+            self.output_row.set_hint("导出的 CSV 将写入此文件夹")
+            self.type_row.pack_forget()
+        elif op.startswith("分析"):
+            self.input_row.set_mode("file", filetypes=DBS_FILETYPES)
+            self.input_row.set_hint("选择 .dbs 文件")
+            self.output_row.pack_forget()
+            self.type_row.pack_forget()
+        else:
+            self.input_row.set_mode("file_or_dir")
+            self.input_row.set_hint("CSV 文件，或包含 CSV 的编译目录")
+            self.output_row.pack(fill=tk.X, pady=4)
+            self.output_row.set_mode("save_or_dir", filetypes=DBS_FILETYPES)
+            self.output_row.set_hint("可指定输出 .dbs 文件，或选择输出文件夹")
+            self.type_row.pack(fill=tk.X, pady=4)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         if err := self.input_row.validate_exists(required=True):
@@ -543,7 +672,9 @@ class KoePanel(BasePanel):
             "模式",
             [("scene", "按场景收集"), ("single", "单条 KOE 编号")],
         )
-        self.scene_row = PathRow(parent, "场景输入", mode="either")
+        self.scene_row = PathRow(
+            parent, "场景输入", mode="file_or_dir", filetypes=PCK_FILETYPES
+        )
         self.scene_row.pack(fill=tk.X, pady=4)
         self.koe_no = TextRow(parent, "KOE 编号")
         self.koe_no.pack(fill=tk.X, pady=4)
@@ -551,7 +682,7 @@ class KoePanel(BasePanel):
         self.voice_row.pack(fill=tk.X, pady=4)
         self.output_row = PathRow(parent, "输出目录", mode="dir")
         self.output_row.pack(fill=tk.X, pady=4)
-        self.stats_only = labeled_check(parent, "仅统计不提取（--stats-only）")
+        self.stats_only = labeled_check(parent, "仅统计不提取（--stats-only）", in_section=False)
         self.angou = AngouRow(parent)
         self.angou.pack(fill=tk.X, pady=4)
 
@@ -592,7 +723,12 @@ class TextmapPanel(BasePanel):
                 ("dat_apply", "写回 .dat"),
             ],
         )
-        self.input_row = PathRow(parent, "输入", mode="either")
+        self.input_row = PathRow(
+            parent,
+            "输入",
+            mode="file_or_dir",
+            hint=".ss / .dat 文件，或包含这些文件的目录",
+        )
         self.input_row.pack(fill=tk.X, pady=4)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
@@ -628,7 +764,7 @@ class PatchPanel(BasePanel):
         )
         self.exe_row = PathRow(parent, "SiglusEngine.exe", mode="file")
         self.exe_row.pack(fill=tk.X, pady=4)
-        self.key_row = PathRow(parent, "密钥来源", mode="file")
+        self.key_row = PathRow(parent, "密钥来源", mode="file_or_dir")
         self.key_row.pack(fill=tk.X, pady=4)
         self.output_row = PathRow(
             parent,
@@ -638,7 +774,7 @@ class PatchPanel(BasePanel):
         )
         self.output_row.pack(fill=tk.X, pady=4)
         self.loc = labeled_combo(parent, "地域检测", ["关闭 (0)", "恢复 (1)"])
-        self.inplace = labeled_check(parent, "直接覆盖原文件（--inplace）")
+        self.inplace = labeled_check(parent, "直接覆盖原文件（--inplace）", in_section=False)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         if err := self.exe_row.validate_exists(required=True, as_dir=False):
@@ -683,7 +819,7 @@ class TutorialPanel(BasePanel):
             parent,
             "输入 Scene.pck",
             mode="file",
-            filetypes=[("PCK", "*.pck"), ("所有文件", "*.*")],
+            filetypes=PCK_FILETYPES,
         )
         self.input_row.pack(fill=tk.X, pady=4)
         self.output_row = PathRow(
@@ -740,7 +876,7 @@ class InitPanel(BasePanel):
             text="下载或刷新运行时常量 const.py。首次使用其他功能前请先执行一次。",
             wraplength=520,
         ).pack(anchor=tk.W, pady=(0, 8))
-        self.force = labeled_check(parent, "强制覆盖已有常量（--force）")
+        self.force = labeled_check(parent, "强制覆盖已有常量（--force）", in_section=False)
         self.ref_row = TextRow(parent, "Git 引用")
         self.ref_row.pack(fill=tk.X, pady=4)
 
@@ -758,9 +894,15 @@ class TestPanel(BasePanel):
     TITLE = "回编测试"
 
     def _build(self, parent: ttk.Frame) -> None:
-        self.input_row = PathRow(parent, "输入", mode="either")
+        self.input_row = PathRow(
+            parent,
+            "输入",
+            mode="file_or_dir",
+            filetypes=PCK_FILETYPES,
+            hint="单个 .pck 或包含多个 .pck 的文件夹",
+        )
         self.input_row.pack(fill=tk.X, pady=4)
-        self.serial = labeled_check(parent, "串行编译（--serial）")
+        self.serial = labeled_check(parent, "串行编译（--serial）", in_section=False)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         if err := self.input_row.validate_exists(required=True):
@@ -782,7 +924,7 @@ class LspPanel(BasePanel):
             text="启动 SiglusSS 语言服务器（供编辑器 LSP 集成）。点击开始后保持运行，使用「停止」结束。",
             wraplength=520,
         ).pack(anchor=tk.W, pady=(0, 8))
-        self.serial = labeled_check(parent, "禁用并行扫描（--serial）")
+        self.serial = labeled_check(parent, "禁用并行扫描（--serial）", in_section=False)
 
     def _build_command(self) -> tuple[list[str], Path | None] | str:
         argv = ["-lsp"]

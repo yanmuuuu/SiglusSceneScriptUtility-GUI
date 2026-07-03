@@ -11,9 +11,11 @@ from tkinter import messagebox, ttk
 from . import UPSTREAM_VERSION, __version__
 from .const_check import const_available
 from .panels import PANEL_HINTS, PANEL_LABELS, PANEL_NAV_GROUPS, PANEL_ORDER, PANELS, BasePanel, LspPanel
+from .nav import NavGroup, NavItem
 from .process_util import kill_process_tree, popen_group_kwargs
-from .runner import CliRunner
-from .theme import apply_theme
+from .runner import CliRunner, _cli_subprocess_env
+from .scroll import VerticalScrollArea
+from .theme import BG, BG_NAV, BG_PANEL, BORDER, apply_theme, prepare_display
 from .widgets import LogPanel
 
 _NAV_GROUPS = PANEL_NAV_GROUPS
@@ -35,7 +37,7 @@ class MainApp(tk.Tk):
         self._runner = CliRunner(self._on_log_line, self._on_task_done)
         self._panel_classes = dict(PANELS)
         self._panels: dict[str, BasePanel] = {}
-        self._nav_buttons: dict[str, ttk.Button] = {}
+        self._nav_buttons: dict[str, NavItem] = {}
         self._current_key = ""
 
         self._build_ui()
@@ -49,64 +51,55 @@ class MainApp(tk.Tk):
         outer = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        nav_outer = ttk.Frame(outer, padding=(8, 10))
+        nav_outer = ttk.Frame(outer, padding=(12, 14), style="Nav.TFrame")
         outer.add(nav_outer, weight=0)
-        ttk.Label(nav_outer, text="Siglus SSU", style="Title.TLabel").pack(anchor=tk.W)
-        ttk.Label(nav_outer, text="图形工具", style="Hint.TLabel").pack(anchor=tk.W, pady=(0, 10))
+        ttk.Label(nav_outer, text="Siglus SSU", style="NavBrand.TLabel").pack(anchor=tk.W, padx=4)
+        ttk.Label(nav_outer, text="图形工具", style="NavSub.TLabel").pack(anchor=tk.W, padx=4, pady=(2, 10))
+        tk.Frame(nav_outer, height=1, bg=BORDER).pack(fill=tk.X, padx=4, pady=(0, 6))
 
-        nav_canvas = tk.Canvas(nav_outer, width=168, highlightthickness=0, borderwidth=0)
-        nav_scroll = ttk.Scrollbar(nav_outer, orient=tk.VERTICAL, command=nav_canvas.yview)
-        self._nav_frame = ttk.Frame(nav_canvas)
-        self._nav_frame.bind(
-            "<Configure>",
-            lambda _e: nav_canvas.configure(scrollregion=nav_canvas.bbox("all")),
+        self._nav_scroll = VerticalScrollArea(
+            nav_outer, bg=BG_NAV, body_style="Nav.TFrame", padding=(0, 4)
         )
-        nav_canvas.create_window((0, 0), window=self._nav_frame, anchor=tk.NW)
-        nav_canvas.configure(yscrollcommand=nav_scroll.set)
-        nav_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        nav_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self._nav_scroll.pack(fill=tk.BOTH, expand=True)
+        nav_body = self._nav_scroll.body
 
         for group, keys in _NAV_GROUPS:
-            ttk.Label(self._nav_frame, text=group, style="NavHeading.TLabel").pack(
-                anchor=tk.W, pady=(10, 4), padx=4
-            )
+            grp = NavGroup(nav_body, group)
+            grp.pack(fill=tk.X)
             for key in keys:
-                btn = ttk.Button(
-                    self._nav_frame,
-                    text=PANEL_LABELS[key],
-                    style="Nav.TButton",
+                item = NavItem(
+                    grp.body,
+                    PANEL_LABELS[key],
                     command=lambda k=key: self._show_panel(k),
                 )
-                btn.pack(fill=tk.X, padx=2, pady=1)
-                self._nav_buttons[key] = btn
+                item.pack(fill=tk.X, padx=4, pady=1)
+                self._nav_buttons[key] = item
+
+        self._nav_scroll.refresh_bindings()
+        self.after_idle(lambda: outer.sashpos(0, 220))
 
         right_pane = ttk.Panedwindow(outer, orient=tk.VERTICAL)
         outer.add(right_pane, weight=1)
 
-        work = ttk.Frame(right_pane, padding=(12, 10))
+        work = ttk.Frame(right_pane, padding=(18, 16))
         right_pane.add(work, weight=3)
 
         header = ttk.Frame(work)
-        header.pack(fill=tk.X)
+        header.pack(fill=tk.X, pady=(0, 8))
         self._title = ttk.Label(header, text="", style="Title.TLabel")
         self._title.pack(anchor=tk.W)
-        self._hint = ttk.Label(header, text="", style="Hint.TLabel", wraplength=720)
-        self._hint.pack(anchor=tk.W, pady=(4, 8))
+        self._hint = ttk.Label(header, text="", style="Subtitle.TLabel", wraplength=780)
+        self._hint.pack(anchor=tk.W, pady=(8, 6))
+        tk.Frame(header, height=1, bg=BORDER).pack(fill=tk.X, pady=(10, 6))
 
-        panel_scroll = tk.Canvas(work, highlightthickness=0, borderwidth=0)
-        panel_scroll.pack(fill=tk.BOTH, expand=True)
-        self._panel_host = ttk.Frame(panel_scroll, padding=(0, 4))
-        self._panel_window = panel_scroll.create_window((0, 0), window=self._panel_host, anchor=tk.NW)
-
-        def _on_panel_configure(_event: tk.Event) -> None:
-            panel_scroll.configure(scrollregion=panel_scroll.bbox("all"))
-            panel_scroll.itemconfigure(self._panel_window, width=panel_scroll.winfo_width())
-
-        self._panel_host.bind("<Configure>", _on_panel_configure)
-        panel_scroll.bind("<Configure>", _on_panel_configure)
+        self._panel_scroll = VerticalScrollArea(
+            work, bg=BG_PANEL, body_style="SectionBody.TFrame", padding=(6, 8)
+        )
+        self._panel_scroll.pack(fill=tk.BOTH, expand=True)
+        self._panel_host = self._panel_scroll.body
 
         actions = ttk.Frame(work)
-        actions.pack(fill=tk.X, pady=(10, 4))
+        actions.pack(fill=tk.X, pady=(12, 6))
         self._run_btn = ttk.Button(
             actions, text="开始执行", style="Action.TButton", command=self._run
         )
@@ -119,17 +112,17 @@ class MainApp(tk.Tk):
         self._progress.pack(side=tk.RIGHT, padx=(8, 0))
         ttk.Label(actions, text="Ctrl+Enter 执行", style="Hint.TLabel").pack(side=tk.RIGHT)
 
-        log_frame = ttk.Frame(right_pane, padding=(12, 0, 12, 8))
+        log_frame = ttk.Frame(right_pane, padding=(16, 4, 16, 10))
         right_pane.add(log_frame, weight=2)
         self._log = LogPanel(log_frame)
         self._log.pack(fill=tk.BOTH, expand=True)
 
-        footer = ttk.Frame(self, padding=(12, 6))
+        footer = ttk.Frame(self, padding=(14, 8), style="Footer.TFrame")
         footer.pack(fill=tk.X, side=tk.BOTTOM)
         self._legacy = tk.BooleanVar(value=False)
-        ttk.Checkbutton(footer, text="纯 Python 模式（--legacy）", variable=self._legacy).pack(
-            side=tk.LEFT
-        )
+        ttk.Checkbutton(
+            footer, text="纯 Python 模式（--legacy）", variable=self._legacy, style="Footer.TCheckbutton"
+        ).pack(side=tk.LEFT)
         ttk.Label(footer, text="常量配置").pack(side=tk.LEFT, padx=(20, 4))
         self._profile = ttk.Combobox(footer, values=["0", "1", "2"], width=3, state="readonly")
         self._profile.current(0)
@@ -148,18 +141,27 @@ class MainApp(tk.Tk):
     def _ensure_panel(self, key: str) -> BasePanel:
         if key not in self._panels:
             self._panels[key] = self._panel_classes[key](self._panel_host)
+            self._panel_scroll.refresh_bindings(self._panels[key])
         return self._panels[key]
 
     def _show_panel(self, key: str) -> None:
         self._current_key = key
-        for k, btn in self._nav_buttons.items():
-            btn.configure(style="NavSelected.TButton" if k == key else "Nav.TButton")
+        for k, item in self._nav_buttons.items():
+            item.set_selected(k == key)
         panel = self._ensure_panel(key)
         for k, p in self._panels.items():
             if k == key:
                 p.pack(fill=tk.BOTH, expand=True)
             else:
                 p.pack_forget()
+        self._panel_scroll.scroll_to_top()
+        self._title.configure(text=PANEL_LABELS[key])
+        self._hint.configure(text=PANEL_HINTS.get(key, ""))
+        is_lsp = key == "lsp"
+        self._run_btn.configure(text="启动 LSP" if is_lsp else "开始执行")
+        self._stop_btn.configure(
+            state=tk.NORMAL if is_lsp and self._lsp_proc and self._lsp_proc.poll() is None else tk.DISABLED
+        )
         self._title.configure(text=PANEL_LABELS[key])
         self._hint.configure(text=PANEL_HINTS.get(key, ""))
         is_lsp = key == "lsp"
@@ -219,6 +221,7 @@ class MainApp(tk.Tk):
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_cli_subprocess_env(),
             **popen_group_kwargs(),
         )
         self._status.configure(text=f"LSP 运行中 (PID {self._lsp_proc.pid})")
@@ -333,5 +336,6 @@ class MainApp(tk.Tk):
 
 
 def main() -> None:
+    prepare_display()
     app = MainApp()
     app.mainloop()

@@ -15,8 +15,14 @@ SiglusSceneScriptUtility GUI — 便携版使用说明
 【系统要求】
 
 - Windows 10 / 11（64 位推荐）
-- 无需预装 Python
-- 处理加密场景时，请在对应功能中填写游戏目录作为「密钥来源」
+- 便携版：无需预装 Python
+- 若从源码运行：需 Python 3.12 或更高（3.11 及以下不支持）
+
+【从开发仓库启动】
+
+- 优先双击 dist\SiglusSSU-GUI\SiglusSSU-GUI.exe（若已运行 scripts\build_portable.bat 打包）
+- 或双击项目根目录「启动 SiglusSSU-GUI.bat」
+  顺序：便携版 → .venv（uv sync 后）→ Python 3.12+
 
 【文件夹说明】
 

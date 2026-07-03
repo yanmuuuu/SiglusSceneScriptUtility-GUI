@@ -11,9 +11,9 @@ class BasePanel(ttk.Frame, ABC):
     TITLE = ""
 
     def __init__(self, master: tk.Misc) -> None:
-        super().__init__(master, padding=8)
+        super().__init__(master, padding=10)
         self._output_hint: Path | None = None
-        self._body = ttk.Frame(self)
+        self._body = ttk.Frame(self, style="SectionBody.TFrame")
         self._body.pack(fill=tk.BOTH, expand=True)
         self._build(self._body)
 

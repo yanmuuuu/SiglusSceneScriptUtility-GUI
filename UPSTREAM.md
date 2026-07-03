@@ -7,7 +7,7 @@
 | 上游仓库 | https://github.com/Jirehlov/SiglusSceneScriptUtility |
 | 上游作者 | [Jirehlov](https://github.com/Jirehlov) |
 | 捆绑 CLI 版本 | 0.3.7（见 `pyproject.toml` 中 `upstream-version`） |
-| GUI 版本 | 0.2.0 |
+| GUI 版本 | 0.2.1 |
 
 ## 目录归属
 
@@ -17,7 +17,7 @@
 | `src/siglus_ssu_gui/` | 本仓库 GUI 实现 |
 | `manual.md` / `manual_cn.md` | 上游 CLI 手册（含 GUI 引导注释） |
 | `changelog.md` | 变更日志（含 GUI 与上游记录） |
-| `SPEC.md` / `instructions.md` | 本仓库 GUI 文档 |
+| `SPEC.md` / `instructions.md` / `启动 SiglusSSU-GUI.bat` | 本仓库 GUI 文档与启动脚本 |
 
 ## 同步 upstream
 
