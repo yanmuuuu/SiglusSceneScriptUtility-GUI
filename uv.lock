@@ -244,8 +244,11 @@ wheels = [
 
 [[package]]
 name = "siglus-ssu-gui"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
+dependencies = [
+    { name = "pillow" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -257,6 +260,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pillow", specifier = ">=12.1.1" }]
 
 [package.metadata.requires-dev]
 dev = [

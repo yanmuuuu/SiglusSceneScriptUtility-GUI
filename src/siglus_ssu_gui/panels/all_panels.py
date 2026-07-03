@@ -28,6 +28,7 @@ from .base import BasePanel
 
 class ExtractPanel(BasePanel):
     TITLE = "提取"
+    HELP_DOC = "提取.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_radio(
@@ -101,6 +102,7 @@ class ExtractPanel(BasePanel):
 
 class CompilePanel(BasePanel):
     TITLE = "编译"
+    HELP_DOC = "编译.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_radio(
@@ -187,6 +189,7 @@ class CompilePanel(BasePanel):
 
 class AnalyzePanel(BasePanel):
     TITLE = "分析"
+    HELP_DOC = "分析.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_combo(
@@ -290,6 +293,7 @@ class AnalyzePanel(BasePanel):
 
 class G00Panel(BasePanel):
     TITLE = "图片 g00"
+    HELP_DOC = "图片g00.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_combo(
@@ -435,6 +439,7 @@ class G00Panel(BasePanel):
 
 class SoundPanel(BasePanel):
     TITLE = "音频"
+    HELP_DOC = "音频.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_combo(
@@ -523,6 +528,7 @@ class SoundPanel(BasePanel):
 
 class VideoPanel(BasePanel):
     TITLE = "视频"
+    HELP_DOC = "视频.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_combo(
@@ -599,6 +605,7 @@ class VideoPanel(BasePanel):
 
 class DbPanel(BasePanel):
     TITLE = "数据库"
+    HELP_DOC = "数据库.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_combo(
@@ -665,6 +672,7 @@ class DbPanel(BasePanel):
 
 class KoePanel(BasePanel):
     TITLE = "语音收集"
+    HELP_DOC = "语音收集.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.mode = labeled_radio(
@@ -711,6 +719,7 @@ class KoePanel(BasePanel):
 
 class TextmapPanel(BasePanel):
     TITLE = "文本映射"
+    HELP_DOC = "文本映射.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_radio(
@@ -749,6 +758,7 @@ class TextmapPanel(BasePanel):
 
 class PatchPanel(BasePanel):
     TITLE = "引擎补丁"
+    HELP_DOC = "引擎补丁.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.op = labeled_combo(
@@ -813,6 +823,7 @@ class PatchPanel(BasePanel):
 
 class TutorialPanel(BasePanel):
     TITLE = "场景教程"
+    HELP_DOC = "场景教程.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.input_row = PathRow(
@@ -845,6 +856,7 @@ class TutorialPanel(BasePanel):
 
 class ExecPanel(BasePanel):
     TITLE = "执行标签"
+    HELP_DOC = "执行标签.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.engine_row = PathRow(parent, "引擎路径", mode="file")
@@ -869,6 +881,7 @@ class ExecPanel(BasePanel):
 
 class InitPanel(BasePanel):
     TITLE = "初始化"
+    HELP_DOC = "初始化.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         ttk.Label(
@@ -892,6 +905,7 @@ class InitPanel(BasePanel):
 
 class TestPanel(BasePanel):
     TITLE = "回编测试"
+    HELP_DOC = "回编测试.md"
 
     def _build(self, parent: ttk.Frame) -> None:
         self.input_row = PathRow(
@@ -916,6 +930,7 @@ class TestPanel(BasePanel):
 
 class LspPanel(BasePanel):
     TITLE = "语言服务器"
+    HELP_DOC = "语言服务器.md"
     background = True
 
     def _build(self, parent: ttk.Frame) -> None:
@@ -951,11 +966,16 @@ PANELS: list[tuple[str, type[BasePanel]]] = [
     ("lsp", LspPanel),
 ]
 
+from .manual_panel import ManualPanel  # noqa: E402
+
+PANELS.append(("manual", ManualPanel))
+
 PANEL_LABELS = {
     "extract": "提取",
     "compile": "编译",
     "analyze": "分析",
     "g00": "图片 g00",
+    "browser": "资源浏览",
     "sound": "音频",
     "video": "视频",
     "db": "数据库",
@@ -967,6 +987,7 @@ PANEL_LABELS = {
     "init": "初始化",
     "test": "回编测试",
     "lsp": "语言服务器",
+    "manual": "操作手册",
 }
 
 PANEL_ORDER = [
@@ -994,11 +1015,15 @@ PANEL_NAV_GROUPS: list[tuple[str, list[str]]] = [
     ),
     (
         "游戏资源",
-        ["g00", "sound", "video", "db", "koe"],
+        ["browser", "g00", "sound", "video", "db", "koe"],
     ),
     (
         "系统与工具",
         ["patch", "init", "test", "lsp"],
+    ),
+    (
+        "帮助与手册",
+        ["manual"],
     ),
 ]
 
@@ -1007,6 +1032,7 @@ PANEL_HINTS: dict[str, str] = {
     "compile": "把修改后的 .ss 目录重新打包为 .pck。汉化流程的最后一步。",
     "analyze": "查看包内结构、对比两个文件差异、统计台词字数。结果输出在下方日志。",
     "g00": "处理 Siglus 图片资源：分析、提取 PNG、合并或从图片创建 .g00。",
+    "browser": "选择根目录后按类型浏览、缩略图预览图片、试听音频、查看脚本与场景包信息。",
     "sound": "提取/分析/编码游戏音频（.ovk .owp .nwa .ogg）。",
     "video": "提取或编码游戏视频（.omv / .ogv）。",
     "db": "导出、分析或重新编译游戏数据库 .dbs。",
@@ -1018,4 +1044,5 @@ PANEL_HINTS: dict[str, str] = {
     "init": "下载运行时常量 const.py。首次使用或升级工具后执行一次。",
     "test": "自动执行 提取→编译→对比，验证工具链是否正常。",
     "lsp": "启动语言服务器，供 VS Code / Cursor 获得 .ss 语法提示。",
+    "manual": "内嵌中文教程：完整汉化流程、各功能字段说明与故障排除。",
 }

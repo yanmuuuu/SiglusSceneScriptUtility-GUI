@@ -28,6 +28,7 @@ class VerticalScrollArea(ttk.Frame):
     ) -> None:
         super().__init__(master)
         self._bg = bg
+        self._fixed_scroll_height: int | None = None
         self._canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0, bg=bg)
         self._scrollbar = ttk.Scrollbar(
             self, orient=tk.VERTICAL, style="Thin.Vertical.TScrollbar", command=self._canvas.yview
@@ -58,10 +59,18 @@ class VerticalScrollArea(ttk.Frame):
         elif self._scrollbar.winfo_ismapped():
             self._scrollbar.pack_forget()
 
+    def set_fixed_scroll_height(self, height: int | None) -> None:
+        """虚拟列表时指定总高度，避免只按可见子控件计算导致无法滚动。"""
+        self._fixed_scroll_height = height
+        self._sync_scrollregion()
+
     def _sync_scrollregion(self) -> None:
         self.body.update_idletasks()
         width = max(self.body.winfo_reqwidth(), self._canvas.winfo_width())
-        height = self.body.winfo_reqheight()
+        if self._fixed_scroll_height is not None:
+            height = self._fixed_scroll_height
+        else:
+            height = self.body.winfo_reqheight()
         if height > 0:
             self._canvas.configure(scrollregion=(0, 0, width, height))
 
@@ -139,6 +148,20 @@ def bind_text_scroll(text: tk.Text, *, horizontal: bool = True) -> None:
             return "break"
 
         text.bind("<MouseWheel>", _shift_wheel, add="+")
+
+
+def bind_tree_scroll(tree: ttk.Treeview) -> None:
+    """为 Treeview 绑定滚轮。"""
+
+    def _wheel(event: tk.Event) -> str:
+        step = _wheel_delta(event)
+        if step:
+            tree.yview_scroll(step, "units")
+        return "break"
+
+    tree.bind("<MouseWheel>", _wheel, add="+")
+    tree.bind("<Button-4>", lambda _e: tree.yview_scroll(-1, "units"), add="+")
+    tree.bind("<Button-5>", lambda _e: tree.yview_scroll(1, "units"), add="+")
 
 
 def bind_listbox_scroll(listbox: tk.Listbox) -> None:

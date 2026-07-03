@@ -4,12 +4,16 @@
 
 ## [GUI v0.2.1] - 2026-07-03
 
+- **资源浏览**（FModel 式）：根目录扫描、分类筛选、搜索、列表/缩略图、图片·音频·视频·文本预览、跳转功能面板。
+- **资源浏览性能**：懒加载（先文件名后内容）、分批显示列表、缩略图仅渲染可见区域；原生 Listbox 黑底白字，修复 Windows 下看不清的问题。
+- **内嵌手册**：`docs/gui/` 共 20 篇中文教程；左侧「帮助与手册」与各面板「教程」弹窗；**Markdown 渲染**。
+- **环境配置**：`环境配置.bat`、`scripts/setup_env.py`；克隆后自动 `uv` + Python 3.12 + `uv sync`；`启动 SiglusSSU-GUI.bat` 首次自动配置。
+- 依赖 **Pillow** 支持 G00/图片预览；`uv.lock`、`.python-version` 锁定环境。
 - **界面**：FModel 风格深色主题、高 DPI；分组侧栏（`nav.py`）与可滚动区域（`scroll.py`）；细滚动条与滚轮支持。
 - **路径选择**：`PathRow` 拆分为「选文件 / 选文件夹 / 另存为」；各面板按 CLI 语义动态切换浏览模式。
 - **面板**：图片 g00 合并模式隐藏多余输入、输出固定为文件夹。
 - **稳定性**：修复便携版多进程子窗口重复启动 GUI；`ttk.Panedwindow` 兼容性修复。
-- **启动**：新增 `启动 SiglusSSU-GUI.bat`（便携版 → `.venv` → Python 3.12+）；完善 README / instructions / SPEC 系统要求说明。
-- **清理**：移除冗余启动脚本与一次性 `first_push.ps1`。
+- **启动**：`启动 SiglusSSU-GUI.bat`（便携版 → `.venv` → Python 3.12+）；完善 README / instructions / SPEC。
 
 ## [GUI v0.2.0] - 2026-07-03
 

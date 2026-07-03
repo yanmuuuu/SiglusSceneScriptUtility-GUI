@@ -145,8 +145,7 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# uv
-.python-version
+# uv — 提交 .python-version 以便 uv 自动选用 Python 3.12
 
 # Project specific
 tmp_*/

@@ -45,6 +45,7 @@ GUI 通过子进程调用 `siglus-ssu`，不重复实现底层逻辑，行为与
 
 | 功能 | 对应命令 |
 |---|---|
+| **资源浏览** | （GUI 内置）选根目录、分类预览、跳转各功能 |
 | 提取 | `siglus-ssu -x` |
 | 编译 | `siglus-ssu -c` |
 | 分析 | `siglus-ssu -a` |
@@ -104,20 +105,28 @@ scripts\build_portable.bat
 
 ### 前提条件
 
-- **Python 3.12 或更高**（[python.org](https://www.python.org/downloads/) 下载；安装时勾选 **Add python.exe to PATH**）
+- **Python 3.12 或更高**（运行 GUI 所需；克隆后可用脚本自动准备）
   - 3.11、3.10 等旧版本**不支持**，与上游 CLI 要求一致
-- [uv](https://github.com/astral-sh/uv)（推荐，与 upstream 一致）
+- [uv](https://github.com/astral-sh/uv)（推荐；**无则脚本会自动安装**，并可自动下载 Python 3.12）
 - Rust 工具链（可选；仅构建带 Rust 加速的 wheel 时需要，见 [rustup.rs](https://rustup.rs/)）
 
 ### Windows 快速启动（克隆仓库后）
 
+**方式一（推荐）**：双击根目录 **`环境配置.bat`**，完成后再双击 **`启动 SiglusSSU-GUI.bat`**。
+
+**方式二**：直接双击 **`启动 SiglusSSU-GUI.bat`** — 首次若无 `.venv`，会自动执行环境配置。
+
+自动配置会依次：安装 **uv**（若无）→ 下载 **Python 3.12**（若无）→ **`uv sync`** 安装锁定依赖（含 Pillow 等）。
+
+需要打包 / lint 等开发工具时：
+
 ```bat
-启动 SiglusSSU-GUI.bat
+scripts\setup_env.bat --dev
 ```
 
-逻辑：优先 `dist\SiglusSSU-GUI\SiglusSSU-GUI.exe`（便携版）→ 否则 `.venv\Scripts\python.exe`（已 `uv sync` 时）→ 再检测 `py -3.12` / `python` 是否 ≥ 3.12。
+启动逻辑：优先 `dist\SiglusSSU-GUI\SiglusSSU-GUI.exe`（便携版）→ 否则 `.venv\Scripts\python.exe` → 再检测系统 `py -3.12` / `python` 是否 ≥ 3.12。
 
-若提示「未能启动 GUI」，请运行 `scripts\build_portable.bat` 生成便携版，或安装 Python 3.12+ 后执行 `uv sync`，勿使用 3.11 及以下旧版 Python。
+若提示「未能启动 GUI」，请运行 `scripts\build_portable.bat` 生成便携版，或双击 `环境配置.bat` 重新同步依赖。
 
 ### 从源码
 
@@ -125,10 +134,14 @@ scripts\build_portable.bat
 git clone https://github.com/yanmuuuu/SiglusSceneScriptUtility-GUI.git
 cd SiglusSceneScriptUtility-GUI
 
+# Windows: 双击 环境配置.bat  或  ./scripts/setup_env.sh
+# 或手动：
 uv sync
 uv run siglus-ssu init   # 若提示缺少 const.py
 uv run siglus-ssu-gui    # 启动图形界面
 ```
+
+仓库已包含 **`uv.lock`** 与 **`.python-version`（3.12）**，他人克隆后 `uv sync` 会得到相同依赖版本。
 
 ### 使用 CLI（无需 GUI）
 

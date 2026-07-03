@@ -11,6 +11,7 @@ from tkinter import messagebox, ttk
 from . import UPSTREAM_VERSION, __version__
 from .const_check import const_available
 from .panels import PANEL_HINTS, PANEL_LABELS, PANEL_NAV_GROUPS, PANEL_ORDER, PANELS, BasePanel, LspPanel
+from .panels.browser_panel import BrowserPanel
 from .nav import NavGroup, NavItem
 from .process_util import kill_process_tree, popen_group_kwargs
 from .runner import CliRunner, _cli_subprocess_env
@@ -140,11 +141,31 @@ class MainApp(tk.Tk):
 
     def _ensure_panel(self, key: str) -> BasePanel:
         if key not in self._panels:
-            self._panels[key] = self._panel_classes[key](self._panel_host)
+            if key == "browser":
+                self._panels[key] = BrowserPanel(self._panel_host, app=self)
+            else:
+                self._panels[key] = self._panel_classes[key](self._panel_host)
             self._panel_scroll.refresh_bindings(self._panels[key])
         return self._panels[key]
 
+    def jump_to_panel(self, key: str, *, input_path: str | None = None) -> None:
+        if key not in self._panel_classes and key != "browser":
+            return
+        self._show_panel(key)
+        if not input_path:
+            return
+        panel = self._ensure_panel(key)
+        for attr in ("input_row", "exe_row", "scene_row", "engine_row", "_root_row", "in1"):
+            row = getattr(panel, attr, None)
+            if row is not None and hasattr(row, "set"):
+                row.set(input_path)
+                break
+
     def _show_panel(self, key: str) -> None:
+        if self._current_key == "browser" and key != "browser":
+            old = self._panels.get("browser")
+            if old is not None and hasattr(old, "on_hide"):
+                old.on_hide()
         self._current_key = key
         for k, item in self._nav_buttons.items():
             item.set_selected(k == key)
@@ -154,21 +175,26 @@ class MainApp(tk.Tk):
                 p.pack(fill=tk.BOTH, expand=True)
             else:
                 p.pack_forget()
+        if key == "browser" and hasattr(panel, "on_show"):
+            panel.on_show()
         self._panel_scroll.scroll_to_top()
         self._title.configure(text=PANEL_LABELS[key])
         self._hint.configure(text=PANEL_HINTS.get(key, ""))
+        is_manual = key == "manual"
+        is_browser = key == "browser"
         is_lsp = key == "lsp"
-        self._run_btn.configure(text="启动 LSP" if is_lsp else "开始执行")
-        self._stop_btn.configure(
-            state=tk.NORMAL if is_lsp and self._lsp_proc and self._lsp_proc.poll() is None else tk.DISABLED
-        )
-        self._title.configure(text=PANEL_LABELS[key])
-        self._hint.configure(text=PANEL_HINTS.get(key, ""))
-        is_lsp = key == "lsp"
-        self._run_btn.configure(text="启动 LSP" if is_lsp else "开始执行")
-        self._stop_btn.configure(
-            state=tk.NORMAL if is_lsp and self._lsp_proc and self._lsp_proc.poll() is None else tk.DISABLED
-        )
+        if is_manual or is_browser:
+            self._run_btn.configure(text="开始执行", state=tk.DISABLED)
+            self._stop_btn.configure(state=tk.DISABLED)
+            self._open_btn.configure(state=tk.DISABLED)
+        else:
+            self._run_btn.configure(text="启动 LSP" if is_lsp else "开始执行", state=tk.NORMAL)
+            self._open_btn.configure(state=tk.NORMAL)
+            self._stop_btn.configure(
+                state=tk.NORMAL
+                if is_lsp and self._lsp_proc and self._lsp_proc.poll() is None
+                else tk.DISABLED
+            )
 
     def _global_argv(self) -> list[str]:
         argv: list[str] = []
@@ -180,6 +206,8 @@ class MainApp(tk.Tk):
         return argv
 
     def _run(self) -> None:
+        if self._current_key in ("manual", "browser"):
+            return
         if self._current_key == "lsp":
             self._start_lsp()
             return
@@ -310,6 +338,9 @@ class MainApp(tk.Tk):
 
     def _cleanup_processes(self) -> None:
         self._shutting_down = True
+        browser = self._panels.get("browser")
+        if browser is not None and hasattr(browser, "on_hide"):
+            browser.on_hide()
         self._runner.stop()
         self._stop_lsp()
 

@@ -6,6 +6,7 @@ import sys
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
+from typing import Any
 
 _UI = "Segoe UI" if sys.platform == "win32" else "TkDefaultFont"
 _MONO = "Cascadia Mono" if sys.platform == "win32" else "Courier"
@@ -29,6 +30,11 @@ ACCENT_FG = "#ffffff"
 BORDER = "#3a3a44"
 BORDER_FOCUS = "#4f8fd4"
 SELECT_BG = "#264f78"
+# 资源列表：黑底白字（避免 Windows 下 Listbox 白底 + 浅色字看不清）
+LIST_BG = "#141418"
+LIST_FG = "#ffffff"
+LIST_HEADER_BG = BG_ELEVATED
+LIST_HEADER_FG = "#e8e8ec"
 SASH = "#32323a"
 SCROLL_THUMB = "#4a4a54"
 SCROLL_TRACK = "#1a1a1e"
@@ -90,11 +96,42 @@ def make_entry(parent: tk.Misc, textvariable: tk.StringVar) -> tk.Entry:
     )
 
 
+def make_listbox(parent: tk.Misc, **kwargs: Any) -> tk.Listbox:
+    """原生 Listbox，固定黑底白字，避免 Windows 主题导致白底浅字。"""
+    opts: dict[str, Any] = {
+        "bg": LIST_BG,
+        "fg": LIST_FG,
+        "selectbackground": SELECT_BG,
+        "selectforeground": LIST_FG,
+        "activestyle": "none",
+        "highlightthickness": 0,
+        "borderwidth": 0,
+        "relief": tk.FLAT,
+        "font": ui_font(10),
+        "exportselection": False,
+        "insertbackground": LIST_FG,
+    }
+    opts.update(kwargs)
+    lb = tk.Listbox(parent, **opts)
+    # 部分 Windows 主题会在创建后覆盖颜色，再设一次确保生效
+    lb.configure(
+        bg=LIST_BG,
+        fg=LIST_FG,
+        selectbackground=SELECT_BG,
+        selectforeground=LIST_FG,
+    )
+    return lb
+
+
 def apply_theme(root: tk.Tk) -> ttk.Style:
     root.configure(bg=BG)
     root.option_add("*Font", ui_font(_BASE_SIZE))
     root.option_add("*Menu*Font", ui_font(_BASE_SIZE))
     root.option_add("*TCombobox*Listbox*Font", ui_font(_BASE_SIZE))
+    root.option_add("*Listbox*background", LIST_BG)
+    root.option_add("*Listbox*foreground", LIST_FG)
+    root.option_add("*Listbox*selectBackground", SELECT_BG)
+    root.option_add("*Listbox*selectForeground", LIST_FG)
 
     style = ttk.Style(root)
     style.theme_use("clam")
@@ -350,5 +387,48 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
         bordercolor=SCROLL_TRACK,
         arrowsize=10,
         width=8,
+    )
+    style.configure(
+        "Treeview",
+        background=BG_CARD,
+        foreground=FG,
+        fieldbackground=BG_CARD,
+        bordercolor=BORDER,
+        lightcolor=BG_CARD,
+        darkcolor=BG_CARD,
+        rowheight=26,
+        font=ui_font(_BASE_SIZE),
+    )
+    style.configure(
+        "Treeview.Heading",
+        background=BG_ELEVATED,
+        foreground=FG_SECONDARY,
+        bordercolor=BORDER,
+        relief=tk.FLAT,
+        font=ui_font(_BASE_SIZE, bold=True),
+    )
+    style.map(
+        "Treeview",
+        background=[("selected", SELECT_BG), ("!selected", BG_CARD)],
+        foreground=[("selected", FG), ("!selected", FG)],
+    )
+    style.configure("Panel.TFrame", background=BG_PANEL)
+    style.configure(
+        "Panel.TLabel",
+        background=BG_PANEL,
+        foreground=FG_SECONDARY,
+        font=ui_font(_BASE_SIZE),
+    )
+    style.configure(
+        "PanelHint.TLabel",
+        background=BG_PANEL,
+        foreground=FG_SECONDARY,
+        font=ui_font(_HINT_SIZE),
+    )
+    style.configure(
+        "PanelCaption.TLabel",
+        background=BG_CARD,
+        foreground=FG,
+        font=ui_font(_BASE_SIZE),
     )
     return style

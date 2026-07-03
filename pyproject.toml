@@ -4,14 +4,14 @@ build-backend = "maturin"
 
 [project]
 name = "siglus-ssu-gui"
-version = "0.2.0"
+version = "0.2.1"
 description = "SiglusEngine SceneScript Utility — GUI wrapper around siglus-ssu (upstream CLI bundled)."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
     { name = "Jirehlov" },
 ]
-dependencies = []
+dependencies = ["pillow>=12.1.1"]
 
 [project.scripts]
 siglus-ssu = "siglus_ssu.__main__:main"
@@ -24,6 +24,10 @@ Issues = "https://github.com/Jirehlov/SiglusSceneScriptUtility/issues"
 
 [tool.siglus-ssu-gui]
 upstream-version = "0.3.7"
+
+[tool.uv]
+# 克隆仓库后 uv sync 会按 requires-python 与 .python-version 自动准备 Python 3.12
+default-groups = []
 
 [dependency-groups]
 dev = [
