@@ -260,7 +260,7 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 | `--tmp <tmp_dir>` | 使用指定的持久临时目录。提供此参数后，编译器会在该目录内维护 MD5 缓存（`_md5.json`），从而实现**增量编译**——后续运行时只重编译已更改的 `.ss` 文件。不能与 `--debug`、`--dat-repack`、`--no-angou`、`--no-lzss`、`--set-shuffle`、`--test-shuffle`、`--csv`、`--gei` 或全局 `--const-profile` 同用。 |
 | `--test-shuffle [seed0]` | 穷举搜索所有可能的 32 位 MSVC `rand()` 种子，以找到能精确重建 `<test_dir>` 中字符串表混淆顺序的种子。可选从 `seed0` 开始扫描。不能与 `--tmp` 同用。 |
 | `--csv <seed_csv>` | 与 `--test-shuffle` 同用时，写出 CSV，记录串行重建阶段每个场景对象的初态种子和终态种子。若路径是已存在目录或以路径分隔符结尾，则在其中写出 `test_shuffle_seeds.csv`。不能与 `--tmp` 同用。 |
-| `--gei` | 仅运行 `Gameexe.ini` → `Gameexe.dat` 编译阶段。输出参数按普通 `-c` 的同一规则解析：若它是已存在目录或以路径分隔符结尾，则将 `Gameexe.dat` 写入该目录；否则会把该参数视为输出文件路径，并将 `Gameexe.dat` 写入其父目录。不能与 `--tmp` 同用。 |
+| `--gei` | 仅运行 `Gameexe.ini` → `Gameexe.dat` 编译阶段。输出参数始终按目录处理；如果目录不存在会自动创建，并在其中写入 `Gameexe.dat`。不能与 `--tmp` 同用。 |
 
 #### 编译统计
 

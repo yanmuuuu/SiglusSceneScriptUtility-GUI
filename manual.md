@@ -260,7 +260,7 @@ siglus-ssu -c --test-shuffle [seed0] [--csv <seed_csv>] <input_dir> <output_pck 
 | `--tmp <tmp_dir>` | Use a specific persistent temporary directory. When provided, an MD5 cache (`_md5.json`) is maintained inside this directory to enable **incremental compilation** — only changed `.ss` files are recompiled on subsequent runs. Cannot be combined with `--debug`, `--dat-repack`, `--no-angou`, `--no-lzss`, `--set-shuffle`, `--test-shuffle`, `--csv`, `--gei`, or global `--const-profile`. |
 | `--test-shuffle [seed0]` | Brute-force scan all possible 32-bit MSVC `rand()` seeds to find the one that reproduces the string table order in `<test_dir>`. Optionally start the scan at `seed0`. Cannot be combined with `--tmp`. |
 | `--csv <seed_csv>` | With `--test-shuffle`, write a CSV containing each scene object's initial seed and final seed from the serial rebuild pass. If the path is an existing directory or ends with a path separator, `test_shuffle_seeds.csv` is written inside it. Cannot be combined with `--tmp`. |
-| `--gei` | Only run the `Gameexe.ini` → `Gameexe.dat` compilation stage. The output argument is parsed the same way as normal `-c`: if it is an existing directory or ends with a path separator, `Gameexe.dat` is written inside that directory; otherwise the argument is treated as an output-file path and `Gameexe.dat` is written to its parent directory. Cannot be combined with `--tmp`. |
+| `--gei` | Only run the `Gameexe.ini` → `Gameexe.dat` compilation stage. The output argument is always treated as a directory. If it does not exist, it is created, and `Gameexe.dat` is written inside it. Cannot be combined with `--tmp`. |
 
 #### Compiling Stats
 

@@ -911,7 +911,10 @@ def main(argv=None):
         inp = os.path.abspath(inp)
     out_pck_arg = str(a.output_pck)
     out_pck = os.path.abspath(out_pck_arg)
-    if os.path.isdir(out_pck) or out_pck_arg.endswith(("/", "\\")):
+    if a.gei:
+        out = out_pck
+        scene_pck = "Scene.pck"
+    elif os.path.isdir(out_pck) or out_pck_arg.endswith(("/", "\\")):
         out = out_pck
         scene_pck = "Scene.pck"
     else:

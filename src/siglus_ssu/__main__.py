@@ -78,7 +78,7 @@ def _usage(out=None):
         "    --tmp           Use specific temp directory (not with --debug/--dat-repack/--no-angou/--no-lzss/--set-shuffle/--test-shuffle/--csv/--gei/--const-profile)\n"
         "    --test-shuffle  Bruteforce initial shuffle seed (MSVCRand) for .dat string order (not with --tmp)\n"
         "    --csv           With --test-shuffle, write per-object initial/final seeds to CSV (not with --tmp)\n"
-        "    --gei           Only generate Gameexe.dat (same output handling as -c; not with --tmp)\n"
+        "    --gei           Only generate Gameexe.dat; output is always a directory (not with --tmp)\n"
         "\n"
         "Extract mode:\n"
         f"  {p} -x <input_pck> [output_dir] [--angou VALUE]\n"
