@@ -1,7 +1,20 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+本文件记录 **SiglusSceneScriptUtility GUI** 仓库的变更。上游 CLI 历史版本见下方「上游变更记录」或 [UPSTREAM.md](UPSTREAM.md)。
 
+## [GUI v0.1.0] - 2026-07-03
+
+- 基于 [Jirehlov/SiglusSceneScriptUtility](https://github.com/Jirehlov/SiglusSceneScriptUtility) v0.3.7 创建 GUI 分支。
+- 新增 `siglus-ssu-gui` 图形界面（tkinter），覆盖全部 15 个 CLI 功能面板。
+- 新增 Windows **便携版**打包（PyInstaller）：解压即用，双击 `SiglusSSU-GUI.exe`，无需安装 Python。
+- 新增 [SPEC.md](SPEC.md)、[instructions.md](instructions.md)、[UPSTREAM.md](UPSTREAM.md)。
+- 更新 [README.md](README.md) 说明上游归属与 GUI 定位。
+
+---
+
+## 上游变更记录
+
+以下条目来自上游 CLI 项目（捆绑版本 0.3.7）。
 
 ## [v0.3.7] - TBA
 - Better LSP.

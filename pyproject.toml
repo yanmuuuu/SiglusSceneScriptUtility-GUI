@@ -3,26 +3,32 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "siglus-ssu"
-version = "0.3.7"
-description = "SiglusEngine SceneScript Utility for compiling, extracting and analyzing scripts and other resource files."
+name = "siglus-ssu-gui"
+version = "0.1.0"
+description = "SiglusEngine SceneScript Utility — GUI wrapper around siglus-ssu (upstream CLI bundled)."
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [
-    { name = "Jirehlov" }
+    { name = "Jirehlov" },
 ]
 dependencies = []
 
 [project.scripts]
 siglus-ssu = "siglus_ssu.__main__:main"
+siglus-ssu-gui = "siglus_ssu_gui.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/Jirehlov/SiglusSceneScriptUtility"
+Upstream = "https://github.com/Jirehlov/SiglusSceneScriptUtility"
 Issues = "https://github.com/Jirehlov/SiglusSceneScriptUtility/issues"
+
+[tool.siglus-ssu-gui]
+upstream-version = "0.3.7"
 
 [dependency-groups]
 dev = [
     "maturin>=1.12.4",
+    "pyinstaller>=6.6",
     "ruff>=0.15.2",
     "pillow>=12.1.1",
     "psutil>=5.9",

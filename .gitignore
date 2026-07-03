@@ -161,3 +161,6 @@ work_*/
 *.ss.dis
 *.ss
 Gameexe.dat
+
+# GUI local state
+.gui_state.json

@@ -1,0 +1,29 @@
+name: Portable Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "gui-v*"
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build portable distribution
+        run: python scripts/build_portable.py
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: SiglusSSU-GUI-portable-windows
+          path: |
+            dist/SiglusSSU-GUI-portable.zip
+            dist/SiglusSSU-GUI/

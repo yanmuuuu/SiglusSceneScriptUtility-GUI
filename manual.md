@@ -1,8 +1,10 @@
 # SiglusSceneScriptUtility Manual
 
+> **GUI users:** This repository includes a graphical interface. See [instructions.md](instructions.md) (Chinese) and [SPEC.md](SPEC.md) for the GUI; this manual remains the full CLI reference.
+
 **Version:** See `siglus-ssu --version`
 
-**Repository:** https://github.com/Jirehlov/SiglusSceneScriptUtility
+**Repository:** https://github.com/Jirehlov/SiglusSceneScriptUtility (upstream CLI)
 
 **Chinese Manual:** [manual_cn.md](manual_cn.md)
 

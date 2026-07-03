@@ -1,5 +1,7 @@
 name: Python CI
 
+# GUI fork: lint upstream + GUI Python; PyPI publish workflow is upstream-only (see publish.yml).
+
 on:
   push:
     branches: [ main ]
@@ -29,6 +31,9 @@ jobs:
 
       - name: Install dependencies
         run: uv sync
+
+      - name: GUI import smoke test
+        run: uv run python -c "from siglus_ssu_gui.app import MainApp; from siglus_ssu_gui.runner import CliRunner; print('gui ok')"
 
       # --- PR Checks ---
       - name: Lint check

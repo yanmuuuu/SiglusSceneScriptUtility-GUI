@@ -1,8 +1,10 @@
 # SiglusSceneScriptUtility 使用手册
 
+> **图形界面用户：** 若您通过 **SiglusSceneScriptUtility GUI** 使用本工具，请参阅 [instructions.md](instructions.md) 获取中文界面操作说明；本手册为 CLI 完整参考。GUI 通过子进程调用 `siglus-ssu`，行为与本文档一致。
+
 **版本：** 见 `siglus-ssu --version`
 
-**仓库：** https://github.com/Jirehlov/SiglusSceneScriptUtility
+**仓库：** https://github.com/Jirehlov/SiglusSceneScriptUtility（CLI 上游）
 
 **英文版：** [manual.md](manual.md)
 

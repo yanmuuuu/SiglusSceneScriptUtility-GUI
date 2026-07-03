@@ -1,4 +1,7 @@
-name: Build wheels & publish to PyPI
+name: Build wheels & publish to PyPI (upstream)
+
+# Disabled for GUI fork by default — publishes upstream siglus-ssu to PyPI.
+# Run manually only if you intend to publish the CLI package from this repo.
 
 on:
   workflow_dispatch:
