@@ -16,6 +16,7 @@ _PREVIEWABLE_IMAGE = {".g00", ".g01", ".png", ".jpg", ".jpeg", ".bmp", ".webp", 
 _PREVIEWABLE_AUDIO = {".ogg", ".wav", ".owp", ".nwa", ".mp3"}
 _TEXT_PREVIEW = {".ss", ".ini", ".inc", ".csv", ".txt", ".json", ".dat"}
 _VIDEO_EXT = {".omv", ".ogv", ".mp4", ".webm"}
+_TEXT_PREVIEW_BYTES = 256 * 1024
 
 
 class PreviewService:
@@ -75,11 +76,19 @@ class PreviewService:
 
     def text_snippet(self, path: Path, *, limit: int = 120) -> str:
         try:
-            raw = path.read_bytes()
+            with path.open("rb") as fh:
+                raw = fh.read(_TEXT_PREVIEW_BYTES + 1)
         except OSError as exc:
             return f"无法读取：{exc}"
+        truncated = len(raw) > _TEXT_PREVIEW_BYTES
+        if truncated:
+            raw = raw[:_TEXT_PREVIEW_BYTES]
         if path.suffix.lower() == ".dat":
-            return f"二进制 .dat（{format_size(len(raw))}）\n\n请用「提取」或「分析」查看内容。"
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = len(raw)
+            return f"二进制 .dat（{format_size(size)}）\n\n请用「提取」或「分析」查看内容。"
         for enc in ("utf-8", "utf-8-sig", "cp932", "shift_jis"):
             try:
                 text = raw.decode(enc)
@@ -90,7 +99,14 @@ class PreviewService:
             text = raw.decode("utf-8", errors="replace")
         lines = text.splitlines()
         if len(lines) > limit:
+            if truncated:
+                return (
+                    "\n".join(lines[:limit])
+                    + f"\n\n…（文件较大，仅从前 {format_size(_TEXT_PREVIEW_BYTES)} 中显示 {limit} 行）"
+                )
             return "\n".join(lines[:limit]) + f"\n\n…（共 {len(lines)} 行，仅显示前 {limit} 行）"
+        if truncated:
+            return text + f"\n\n…（文件较大，仅读取前 {format_size(_TEXT_PREVIEW_BYTES)}）"
         return text
 
     def load_thumbnail(self, path: Path, *, size: int = 128):

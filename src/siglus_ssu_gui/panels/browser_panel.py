@@ -21,7 +21,7 @@ from ..resource_catalog import (
     iter_directory_entries,
     panel_for_entry,
 )
-from ..scroll import VerticalScrollArea, bind_listbox_scroll, bind_text_scroll
+from ..scroll import VerticalScrollArea, bind_listbox_scroll, bind_text_scroll, bind_tree_scroll
 from ..theme import (
     BG_CARD,
     BG_PANEL,
@@ -29,9 +29,6 @@ from ..theme import (
     FG,
     FG_SECONDARY,
     LIST_BG,
-    LIST_HEADER_BG,
-    LIST_HEADER_FG,
-    make_listbox,
     ui_font,
 )
 from ..widgets import PathRow, Section
@@ -44,8 +41,6 @@ _STATE_FILE = Path(__file__).resolve().parents[2] / ".gui_state.json"
 _THUMB_COLS = 5
 _THUMB_ROW_HEIGHT = 132
 _SCAN_BATCH = 200
-_TREE_UI_CHUNK = 120
-_TREE_FAST_LIMIT = 200
 _THUMB_LOAD_WORKERS = 2
 _THUMB_CACHE_MAX = 64
 
@@ -184,33 +179,43 @@ class BrowserPanel(BasePanel):
     def _build_list_view(self, parent: ttk.Frame) -> None:
         box = tk.Frame(parent, bg=BG_PANEL)
         box.pack(fill=tk.BOTH, expand=True)
-        header = tk.Label(
-            box,
-            text="相对路径          类型              大小",
-            bg=LIST_HEADER_BG,
-            fg=LIST_HEADER_FG,
-            font=ui_font(10, bold=True),
-            anchor=tk.W,
-            padx=8,
-            pady=5,
-        )
-        header.pack(fill=tk.X)
         body = tk.Frame(box, bg=LIST_BG, highlightthickness=1, highlightbackground=BORDER)
         body.pack(fill=tk.BOTH, expand=True)
         sy = ttk.Scrollbar(body, orient=tk.VERTICAL, style="Thin.Vertical.TScrollbar")
-        self._list = make_listbox(body)
+        sx = ttk.Scrollbar(body, orient=tk.HORIZONTAL, style="Thin.Horizontal.TScrollbar")
+        self._list = ttk.Treeview(
+            body,
+            columns=("path", "type", "size"),
+            show="headings",
+            selectmode="browse",
+            yscrollcommand=sy.set,
+            xscrollcommand=sx.set,
+        )
+        self._list.heading("path", text="相对路径")
+        self._list.heading("type", text="类型")
+        self._list.heading("size", text="大小")
+        self._list.column("path", width=520, minwidth=220, stretch=True, anchor=tk.W)
+        self._list.column("type", width=150, minwidth=90, stretch=False, anchor=tk.W)
+        self._list.column("size", width=92, minwidth=72, stretch=False, anchor=tk.E)
         sy.configure(command=self._list.yview)
-        self._list.configure(yscrollcommand=sy.set)
-        self._list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sy.pack(side=tk.RIGHT, fill=tk.Y)
-        bind_listbox_scroll(self._list)
-        self._list.bind("<<ListboxSelect>>", self._on_list_select)
+        sx.configure(command=self._list.xview)
+        self._list.grid(row=0, column=0, sticky="nsew")
+        sy.grid(row=0, column=1, sticky="ns")
+        sx.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+        bind_tree_scroll(self._list)
+        self._list.bind("<<TreeviewSelect>>", self._on_list_select)
         self._list.bind("<Double-1>", lambda _e: self._preview_selected())
         self._list.bind("<Return>", lambda _e: self._preview_selected())
 
     @staticmethod
-    def _row_label(ent: ResourceEntry) -> str:
-        return f"{ent.rel_name}    {ent.type_label}    {format_size(ent.size)}"
+    def _tree_iid(index: int) -> str:
+        return f"ent:{index}"
+
+    @staticmethod
+    def _row_values(ent: ResourceEntry) -> tuple[str, str, str]:
+        return ent.rel_name, ent.type_label, format_size(ent.size)
 
     def _build_thumb_view(self, parent: ttk.Frame) -> None:
         self._thumb_scroll = VerticalScrollArea(
@@ -348,8 +353,8 @@ class BrowserPanel(BasePanel):
         self._thumb_image_indices.clear()
         self._thumb_last_first_row = -1
         self._thumb_scroll.set_fixed_scroll_height(None)
-        self._list.delete(0, tk.END)
-        self._status.configure(text="扫描中…（仅加载文件名）")
+        self._clear_tree()
+        self._status.configure(text="扫描中…（发现资源后会立即显示）")
 
         cat = self._category.get() or CATEGORY_ALL
         query = self._search_var.get()
@@ -382,17 +387,24 @@ class BrowserPanel(BasePanel):
                         chunk = batch
                         batch = []
                         n = total
-                        self.after(
+                        self._safe_after(
                             0, lambda c=chunk, n=n, sid=scan_id: self._append_scan_batch(c, n, sid)
                         )
                 if scan_id != self._scan_id:
                     return
                 tail = batch
-                self.after(0, lambda sid=scan_id, t=tail: self._finish_scan(t, sid))
+                self._safe_after(0, lambda sid=scan_id, t=tail: self._finish_scan(t, sid))
             except Exception as exc:
-                self.after(0, lambda sid=scan_id, err=exc: self._scan_failed(sid, err))
+                self._safe_after(0, lambda sid=scan_id, err=exc: self._scan_failed(sid, err))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _safe_after(self, delay_ms: int, callback: Any) -> None:
+        try:
+            if self.winfo_exists():
+                self.after(delay_ms, callback)
+        except tk.TclError:
+            pass
 
     def _scan_failed(self, scan_id: int, exc: Exception) -> None:
         if scan_id != self._scan_id:
@@ -403,48 +415,48 @@ class BrowserPanel(BasePanel):
     def _append_scan_batch(self, batch: list[ResourceEntry], total: int, scan_id: int) -> None:
         if scan_id != self._scan_id:
             return
+        start = len(self._entries)
         self._entries.extend(batch)
-        self._status.configure(text=f"扫描中… 已发现 {total} 个文件（完成后显示列表）")
+        self._append_tree_rows(start, batch)
+        if self._view_mode.get() == "thumb" and self._category.get() in (
+            CATEGORY_ALL,
+            CATEGORY_IMAGE,
+        ):
+            self._prepare_thumb_indices()
+            self._thumb_last_first_row = -1
+            self.after_idle(self._thumb_sync_viewport)
+        self._status.configure(text=f"扫描中… 已发现 {total} 个文件")
 
     def _finish_scan(self, tail: list[ResourceEntry], scan_id: int) -> None:
         if scan_id != self._scan_id:
             return
         if tail:
             self._append_scan_batch(tail, len(self._entries) + len(tail), scan_id)
-        self._entries.sort(key=lambda e: (e.category, e.rel_name.lower()))
-        self._populate_list(scan_id)
-
-    def _populate_list(self, scan_id: int) -> None:
-        if scan_id != self._scan_id:
-            return
-        self._list.delete(0, tk.END)
-        if len(self._entries) <= _TREE_FAST_LIMIT:
-            labels = [self._row_label(e) for e in self._entries]
-            if labels:
-                self._list.insert(tk.END, *labels)
-            self._finish_list_populate(scan_id)
-            return
-        self._status.configure(text=f"正在显示 {len(self._entries)} 个文件…")
-        self._populate_list_chunked(scan_id, 0)
-
-    def _populate_list_chunked(self, scan_id: int, start: int) -> None:
-        if scan_id != self._scan_id:
-            return
-        end = min(start + _TREE_UI_CHUNK, len(self._entries))
-        labels = [self._row_label(self._entries[i]) for i in range(start, end)]
-        if labels:
-            self._list.insert(tk.END, *labels)
-        if end < len(self._entries):
-            self.after(2, lambda: self._populate_list_chunked(scan_id, end))
-            return
         self._finish_list_populate(scan_id)
+
+    def _clear_tree(self) -> None:
+        children = self._list.get_children("")
+        if children:
+            self._list.delete(*children)
+
+    def _append_tree_rows(self, start: int, entries: list[ResourceEntry]) -> None:
+        if not entries:
+            return
+        for offset, ent in enumerate(entries):
+            index = start + offset
+            self._list.insert(
+                "",
+                tk.END,
+                iid=self._tree_iid(index),
+                values=self._row_values(ent),
+            )
 
     def _finish_list_populate(self, scan_id: int) -> None:
         if scan_id != self._scan_id:
             return
         self._scan_running = False
         capped = len(self._entries) >= 8000
-        msg = f"共 {len(self._entries)} 个文件（大小在选中后显示）"
+        msg = f"共 {len(self._entries)} 个文件（按扫描顺序显示，大小在选中后显示）"
         if capped:
             msg += "；已达上限，请用搜索或分类缩小范围"
         self._status.configure(text=msg)
@@ -563,9 +575,9 @@ class BrowserPanel(BasePanel):
                         return
                     ent = self._entries[ent_idx]
                     img = self._preview_svc.load_thumbnail(ent.path, size=96)
-                self.after(0, lambda: self._apply_thumb(gen, ent_idx, label, img))
+                self._safe_after(0, lambda: self._apply_thumb(gen, ent_idx, label, img))
             finally:
-                self.after(0, lambda: self._thumb_loading.discard(ent_idx))
+                self._safe_after(0, lambda: self._thumb_loading.discard(ent_idx))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -592,19 +604,26 @@ class BrowserPanel(BasePanel):
                 label.configure(text="无预览", fg=FG_SECONDARY)
 
     def _on_list_select(self, _event: tk.Event | None = None) -> None:
-        sel = self._list.curselection()
+        sel = self._list.selection()
         if not sel:
             return
-        self._select_index(int(sel[0]), preview=False)
+        self._select_index(self._index_from_iid(sel[0]), preview=False)
+
+    def _index_from_iid(self, iid: str) -> int:
+        try:
+            return int(iid.split(":", 1)[1])
+        except (IndexError, ValueError):
+            return -1
 
     def _select_index(self, index: int, *, preview: bool = False) -> None:
         if index < 0 or index >= len(self._entries):
             return
         self._selected = self._entries[index]
-        self._list.selection_clear(0, tk.END)
-        self._list.selection_set(index)
-        self._list.activate(index)
-        self._list.see(index)
+        iid = self._tree_iid(index)
+        if self._list.exists(iid):
+            self._list.selection_set(iid)
+            self._list.focus(iid)
+            self._list.see(iid)
         self._show_entry_info(self._selected)
         if preview:
             self._preview_selected()
@@ -612,12 +631,11 @@ class BrowserPanel(BasePanel):
     def _current_entry(self) -> ResourceEntry | None:
         if self._selected:
             return self._selected
-        sel = self._list.curselection()
+        sel = self._list.selection()
         if sel:
-            try:
-                return self._entries[int(sel[0])]
-            except (ValueError, IndexError):
-                pass
+            index = self._index_from_iid(sel[0])
+            if 0 <= index < len(self._entries):
+                return self._entries[index]
         return None
 
     def _show_entry_info(self, ent: ResourceEntry) -> None:
@@ -627,6 +645,9 @@ class BrowserPanel(BasePanel):
                 if e.path == hydrated.path:
                     self._entries[i] = hydrated
                     ent = hydrated
+                    iid = self._tree_iid(i)
+                    if self._list.exists(iid):
+                        self._list.item(iid, values=self._row_values(hydrated))
                     break
         self._preview_image.configure(image="", text="")
         self._preview_photo = None
@@ -657,7 +678,7 @@ class BrowserPanel(BasePanel):
                     text_extra = "\n\n" + self._preview_svc.text_snippet(ent.path)
             except Exception as exc:
                 image_result = (None, str(exc))
-            self.after(0, lambda: self._apply_preview(token, ent, image_result, text_extra))
+            self._safe_after(0, lambda: self._apply_preview(token, ent, image_result, text_extra))
 
         threading.Thread(target=work, daemon=True).start()
 
