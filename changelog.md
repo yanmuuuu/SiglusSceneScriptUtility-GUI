@@ -2,6 +2,24 @@
 
 本文件记录 **SiglusSceneScriptUtility GUI** 仓库的变更。上游 CLI 历史版本见下方「上游变更记录」或 [UPSTREAM.md](UPSTREAM.md)。
 
+## [GUI v1.0.0] - 2026-07-07
+
+首个稳定版发布：便携版开箱即用，资源浏览与音频试听完善，文档与一键下载就绪。
+
+- **便携版**：内置 Python 运行环境；打包捆绑 ffmpeg/ffplay；双击 `下载 SiglusSSU-GUI.bat` 自动下载到桌面并创建快捷方式。
+- **资源浏览**：修复 G00 预览死锁与列表卡顿；Type2 多切片合成预览；预览/播放/跳转反馈优化。
+- **音频**：`bundled_tools` 自动解析内置 ffplay；首次缺失时后台下载；CLI 子进程注入 PATH。
+- **文档**：完善 `instructions.md`、`README.md` 及全部 `docs/gui/` 教程；便携版使用说明更新。
+- **测试与打包**：`test_clannad.py` / `test_panel_argv.py` 回归脚本；CI 便携版工作流支持 uv 与 ffmpeg 捆绑。
+
+## [GUI v0.2.2] - 2026-07-07
+
+- **便携版捆绑 ffmpeg**：打包时自动下载 ffplay/ffmpeg，资源浏览音频试听与 CLI 音频裁剪无需用户单独安装。
+- **一键下载**：根目录 `下载 SiglusSSU-GUI.bat` 自动下载发布包到桌面、解压并创建快捷方式。
+- **资源浏览**：修复 G00 预览死锁；Type2 多切片合成预览；预览/跳转选中与反馈优化。
+- **文档**：更新 instructions、README、使用说明及 `docs/gui/` 相关教程。
+- **回归测试**：`scripts/test_clannad.py` / `test_panel_argv.py` 覆盖 CLI 与 GUI 面板参数构建。
+
 ## [GUI v0.2.1] - 2026-07-03
 
 - **资源浏览**（FModel 式）：根目录扫描、分类筛选、搜索、列表/缩略图、图片·音频·视频·文本预览、跳转功能面板。

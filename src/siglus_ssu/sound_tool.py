@@ -33,6 +33,7 @@ from .common import (
 from . import sound
 from . import GEI
 from . import pck
+from .bundled_tools import find_ffmpeg, find_ffplay
 
 
 def _cleanup_tmp_dir(tmp_dir: str, out_root: str, remove_owned: bool = False) -> None:
@@ -1768,7 +1769,7 @@ def main(argv=None) -> int:
         if not os.path.isfile(trim_path):
             eprint(f"Gameexe source not found: {trim_path}")
             return 1
-        ffplay_path = shutil.which("ffplay") or ""
+        ffplay_path = find_ffplay() or ""
         try:
             gei_txt = _load_gameexe_ini_text(
                 trim_path,
@@ -1855,7 +1856,7 @@ def main(argv=None) -> int:
             os.path.splitext(path)[1].lower() == ".owp" for path in files
         )
         if needs_ffmpeg:
-            ffmpeg_path = shutil.which("ffmpeg") or ""
+            ffmpeg_path = find_ffmpeg() or ""
             if not ffmpeg_path:
                 eprint("ffmpeg not found in PATH")
                 return 1

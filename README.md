@@ -34,7 +34,9 @@
 | `src/siglus_ssu/` | 上游 CLI 源码（与 upstream 同步） |
 | `src/siglus_ssu_gui/` | GUI 实现（tkinter） |
 | `启动 SiglusSSU-GUI.bat` | Windows 一键启动（优先便携版 → `.venv` → 系统 Python 3.12+） |
-| `scripts/build_portable.bat` | 本地打包便携版 |
+| `下载 SiglusSSU-GUI.bat` | **一键下载便携版到桌面**（含运行环境与 ffmpeg） |
+| `scripts/build_portable.bat` | 本地打包便携版（自动下载并捆绑 ffmpeg） |
+| `scripts/test_clannad.bat` | 用 CLANNAD 游戏目录跑全功能回归测试 |
 | `packaging/` | PyInstaller 入口与便携版说明 |
 
 GUI 通过子进程调用 `siglus-ssu`，不重复实现底层逻辑，行为与命令行一致。
@@ -76,14 +78,22 @@ GUI 通过子进程调用 `siglus-ssu`，不重复实现底层逻辑，行为与
 
 ## 便携版（推荐，无需安装 Python）
 
-像 **FModel** 一样：下载 → 解压到桌面 → 双击运行。
+像 **FModel** 一样：**一次下载 → 解压到桌面 → 双击运行**（已内置 Python 运行环境与 **ffmpeg/ffplay** 音频播放）。
 
-1. 在 GitHub **Releases** 页面下载 `SiglusSSU-GUI-portable.zip`（发布前可从 Actions → Portable Windows Build 的 Artifacts 下载）
-2. 解压得到 `SiglusSSU-GUI` 文件夹
+### 给最终用户：一键下载
+
+1. 双击仓库或发布包中的 **`下载 SiglusSSU-GUI.bat`**
+2. 自动下载到 **桌面\SiglusSSU-GUI** 并创建桌面快捷方式
+3. 双击快捷方式 **SiglusSSU-GUI** 即可使用
+
+### 手动下载
+
+1. 在 GitHub **Releases** 下载 `SiglusSSU-GUI-portable.zip`（或 Actions → Portable Windows Build 的 Artifacts）
+2. 解压得到 `SiglusSSU-GUI` 文件夹（含 `ffmpeg` 子文件夹）
 3. 将整个文件夹放到桌面（或任意位置）
 4. **双击 `SiglusSSU-GUI.exe`** 即可使用
 
-> 请保持文件夹完整，不要只复制 exe。`_internal` 目录必须与 exe 在同一文件夹内。
+> 请保持文件夹完整：`ffmpeg\` 与 `_internal\` 必须与 exe 同目录。
 
 首次运行若提示缺少常量文件，在程序内选择 **初始化** 并执行一次（需联网）。
 
@@ -99,7 +109,7 @@ scripts\build_portable.bat
 
 或 `py -3.12 scripts\build_portable.py`（加 `--rust` 强制编译 Rust 扩展）。
 
-产出：`dist/SiglusSSU-GUI/`（可复制到桌面）与 `dist/SiglusSSU-GUI-portable.zip`（已在 `.gitignore`，不提交仓库）。
+产出：`dist/SiglusSSU-GUI/`（含 `ffmpeg\`，可复制到桌面）与 `dist/SiglusSSU-GUI-portable.zip`。
 
 ## 安装（开发者 / 源码）
 

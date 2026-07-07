@@ -22,9 +22,18 @@
 
 ## 便携版（推荐）
 
-**无需安装 Python、uv 或任何运行环境。**
+**无需安装 Python、uv、ffmpeg 或任何运行环境。**
 
-### 安装步骤
+### 一键下载到桌面（推荐给其他人）
+
+1. 双击 **`下载 SiglusSSU-GUI.bat`**（仓库根目录或发布包内）
+2. 脚本会自动：从 GitHub 下载最新便携包 → 解压到 **桌面\SiglusSSU-GUI** → 创建桌面快捷方式
+3. 双击桌面上的 **SiglusSSU-GUI** 快捷方式即可使用
+
+> 若尚未发布 GitHub Release，维护者可在本地先运行 `scripts\build_portable.bat`，再执行：  
+> `powershell -File scripts\download_portable.ps1 -Local`
+
+### 手动安装
 
 1. 下载发布包中的 `SiglusSSU-GUI-portable.zip`（或解压后的文件夹）
 2. 将整个 `SiglusSSU-GUI` 文件夹放到任意位置（建议桌面）
@@ -34,6 +43,7 @@
 SiglusSSU-GUI/
 ├── SiglusSSU-GUI.exe    ← 双击启动
 ├── 启动 SiglusSSU-GUI.bat
+├── ffmpeg/              ← 内置音频播放（ffplay），勿删
 ├── 使用说明.txt
 └── _internal/           ← 运行依赖，勿删
 ```
@@ -490,10 +500,30 @@ scripts\build_portable.bat
 | 编译编码错误 | **源文件编码** 改为 UTF-8 或 Shift-JIS |
 | 命令找不到 | 开发者：`uv sync`；便携版：勿移动 exe 出文件夹 |
 | Rust 错误 | 勾选 **纯 Python 模式**（较慢） |
+| 资源浏览无法播放音频 | 便携版应含 `ffmpeg` 文件夹；若缺失请重新下载完整 zip；或首次播放时等待自动下载（网络慢可能需数分钟） |
+| 编译报 `keylist.clear` 未知 | CLANNAD HD 等 Steam 版系统脚本 | 用 **回编测试** 验证工具链；汉化时只编译修改过的场景，勿整包重编原版系统 `.ss` |
 | 反编译 .ss 无法直接回编 | 正常；请用原始 source 或自行整理的 `.ss` |
 | 补丁后引擎无法启动 | 恢复备份 exe |
 
 更多见 [manual_cn.md](manual_cn.md) 与上游 [Issues](https://github.com/Jirehlov/SiglusSceneScriptUtility/issues)。
+
+### 示例：CLANNAD（Steam HD）
+
+| 项目 | 路径 |
+|---|---|
+| 游戏根目录 | `C:\steam\steamapps\common\CLANNAD` |
+| 场景包 | `SceneZH.pck` |
+| 立绘目录 | `g00\`（2367 个 `.g00`） |
+| 测试输出 | 桌面 `g00\` |
+
+**资源浏览**：根目录选游戏目录 → 分类 **图片** → 选 `g00\_BL_EXIT.g00` → **预览** / **跳转功能**。
+
+**维护者回归测试**（需已 `uv sync`）：
+
+```bat
+scripts\test_clannad.bat          REM 完整测试（含回编，约 15 分钟）
+scripts\test_clannad.bat --quick  REM 跳过回编与文本映射
+```
 
 ---
 

@@ -21,17 +21,22 @@ from ..resource_catalog import (
     iter_directory_entries,
     panel_for_entry,
 )
-from ..scroll import VerticalScrollArea, bind_listbox_scroll, bind_text_scroll, bind_tree_scroll
+from ..scroll import VerticalScrollArea, bind_listbox_scroll, bind_text_scroll
 from ..theme import (
     BG_CARD,
     BG_PANEL,
     BORDER,
     FG,
-    FG_SECONDARY,
     LIST_BG,
+    LIST_FG,
+    LIST_HEADER_BG,
+    LIST_HEADER_FG,
+    make_listbox,
+    mono_font,
     ui_font,
 )
 from ..widgets import PathRow, Section
+from . import PANEL_LABELS
 from .base import BasePanel
 
 if TYPE_CHECKING:
@@ -40,9 +45,14 @@ if TYPE_CHECKING:
 _STATE_FILE = Path(__file__).resolve().parents[2] / ".gui_state.json"
 _THUMB_COLS = 5
 _THUMB_ROW_HEIGHT = 132
-_SCAN_BATCH = 200
+_TREE_UI_CHUNK = 6
+_RENDER_INTERVAL_MS = 24
+_SCAN_PROGRESS_EVERY = 400
+_MAX_LIST_DISPLAY = 1200
+_LIST_CLEAR_CHUNK = 120
 _THUMB_LOAD_WORKERS = 2
 _THUMB_CACHE_MAX = 64
+_PREVIEW_PLACEHOLDER = "选择文件后点「预览」或双击"
 
 
 class BrowserPanel(BasePanel):
@@ -65,12 +75,21 @@ class BrowserPanel(BasePanel):
         self._thumb_load_sem = threading.Semaphore(_THUMB_LOAD_WORKERS)
         self._preview_token = 0
         self._thumb_last_first_row = -1
+        self._tree_rendered_count = 0
+        self._tree_render_active = False
+        self._last_list_index = -1
+        self._row_labels: list[str] = []
+        self._list_populating = False
         super().__init__(master)
+        self._hook_root_browse()
 
     def on_hide(self) -> None:
         self._scan_id += 1
         self._thumb_gen += 1
         self._scan_running = False
+        self._tree_render_active = False
+        self._list_populating = False
+        self._set_list_loading("")
         self._thumb_loading.clear()
         self._preview_svc.cleanup()
         status = self._status.cget("text")
@@ -80,16 +99,28 @@ class BrowserPanel(BasePanel):
             else:
                 self._status.configure(text="扫描已中断，返回本页将自动重试")
 
+    def _hook_root_browse(self) -> None:
+        """选完根目录后自动刷新，避免只填路径不加载。"""
+        orig = self._root_row._browse_dir
+
+        def _browse_dir() -> None:
+            orig()
+            path = self._root_row.get()
+            if path and Path(path).is_dir():
+                self._save_last_root(path)
+                self._refresh()
+
+        self._root_row._browse_dir = _browse_dir  # type: ignore[method-assign]
+
     def on_show(self) -> None:
-        if self._entries:
+        if self._entries or self._scan_running:
             return
         root = self._root_row.get().strip()
         if not root or not Path(root).is_dir():
+            self._status.configure(text="请选择根目录，或点「刷新」开始扫描")
             return
-        if self._scan_running:
-            return
-        self._status.configure(text="准备加载资源列表…")
-        self.after(150, self._refresh)
+        self._status.configure(text="已记住上次目录，正在后台扫描…")
+        self.after(400, self._refresh)
 
     def _build(self, parent: ttk.Frame) -> None:
         top = Section(parent, "浏览根目录")
@@ -138,6 +169,24 @@ class BrowserPanel(BasePanel):
             filt, text="缩略图", variable=self._view_mode, value="thumb", command=self._switch_view
         ).pack(side=tk.RIGHT, padx=(0, 8))
 
+        actions = ttk.Frame(parent)
+        actions.pack(fill=tk.X, pady=(0, 6))
+        ttk.Button(actions, text="预览", command=self._preview_selected).pack(side=tk.LEFT)
+        ttk.Button(actions, text="播放/打开", style="Secondary.TButton", command=self._play_or_open).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        ttk.Button(actions, text="停止播放", style="Secondary.TButton", command=self._stop_audio).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        ttk.Button(actions, text="打开所在目录", style="Secondary.TButton", command=self._open_parent).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        ttk.Button(actions, text="跳转功能", style="Secondary.TButton", command=self._jump_panel).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+        self._status = ttk.Label(actions, text="", style="Hint.TLabel")
+        self._status.pack(side=tk.RIGHT)
+
         split = ttk.Panedwindow(parent, orient=tk.HORIZONTAL)
         split.pack(fill=tk.BOTH, expand=True, pady=4)
         self._split = split
@@ -154,68 +203,63 @@ class BrowserPanel(BasePanel):
         split.add(right, weight=2)
         self._build_preview_pane(right)
 
-        actions = ttk.Frame(parent)
-        actions.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(actions, text="预览 (Enter)", command=self._preview_selected).pack(side=tk.LEFT)
-        ttk.Button(actions, text="播放/打开", style="Secondary.TButton", command=self._play_or_open).pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
-        ttk.Button(actions, text="停止播放", style="Secondary.TButton", command=self._stop_audio).pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
-        ttk.Button(actions, text="打开所在目录", style="Secondary.TButton", command=self._open_parent).pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
-        ttk.Button(actions, text="跳转功能", style="Secondary.TButton", command=self._jump_panel).pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
-        self._status = ttk.Label(actions, text="", style="Hint.TLabel")
-        self._status.pack(side=tk.RIGHT)
-
-        self._bind_keys(parent)
+        self._bind_keys(self._list)
         self._load_last_root()
         self.after_idle(lambda: split.sashpos(0, 420))
 
     def _build_list_view(self, parent: ttk.Frame) -> None:
         box = tk.Frame(parent, bg=BG_PANEL)
         box.pack(fill=tk.BOTH, expand=True)
+        header = tk.Label(
+            box,
+            text=f"{'相对路径':<54}  {'类型':<14}  {'大小':>10}",
+            bg=LIST_HEADER_BG,
+            fg=LIST_HEADER_FG,
+            font=mono_font(10),
+            anchor=tk.W,
+            padx=8,
+            pady=5,
+        )
+        header.pack(fill=tk.X)
         body = tk.Frame(box, bg=LIST_BG, highlightthickness=1, highlightbackground=BORDER)
         body.pack(fill=tk.BOTH, expand=True)
         sy = ttk.Scrollbar(body, orient=tk.VERTICAL, style="Thin.Vertical.TScrollbar")
-        sx = ttk.Scrollbar(body, orient=tk.HORIZONTAL, style="Thin.Horizontal.TScrollbar")
-        self._list = ttk.Treeview(
-            body,
-            columns=("path", "type", "size"),
-            show="headings",
-            selectmode="browse",
-            yscrollcommand=sy.set,
-            xscrollcommand=sx.set,
-        )
-        self._list.heading("path", text="相对路径")
-        self._list.heading("type", text="类型")
-        self._list.heading("size", text="大小")
-        self._list.column("path", width=520, minwidth=220, stretch=True, anchor=tk.W)
-        self._list.column("type", width=150, minwidth=90, stretch=False, anchor=tk.W)
-        self._list.column("size", width=92, minwidth=72, stretch=False, anchor=tk.E)
+        self._list = make_listbox(body, font=mono_font(10))
         sy.configure(command=self._list.yview)
-        sx.configure(command=self._list.xview)
-        self._list.grid(row=0, column=0, sticky="nsew")
-        sy.grid(row=0, column=1, sticky="ns")
-        sx.grid(row=1, column=0, sticky="ew")
-        body.rowconfigure(0, weight=1)
-        body.columnconfigure(0, weight=1)
-        bind_tree_scroll(self._list)
-        self._list.bind("<<TreeviewSelect>>", self._on_list_select)
+        self._list.configure(yscrollcommand=sy.set)
+        self._list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sy.pack(side=tk.RIGHT, fill=tk.Y)
+        self._list_loading = tk.Label(
+            body,
+            text="",
+            bg=LIST_BG,
+            fg=LIST_FG,
+            font=ui_font(11),
+            anchor=tk.CENTER,
+        )
+        bind_listbox_scroll(self._list)
+        self._list.bind("<<ListboxSelect>>", self._on_list_select)
+        self._list.bind("<ButtonRelease-1>", self._on_list_release, add="+")
         self._list.bind("<Double-1>", lambda _e: self._preview_selected())
         self._list.bind("<Return>", lambda _e: self._preview_selected())
 
-    @staticmethod
-    def _tree_iid(index: int) -> str:
-        return f"ent:{index}"
+    def _on_list_release(self, event: tk.Event) -> None:
+        if self._list_populating or self._scan_running:
+            return
+        idx = self._list.nearest(event.y)
+        if 0 <= idx < len(self._entries):
+            self._last_list_index = idx
+            self.after_idle(lambda i=idx: self._select_index(i, preview=False))
 
     @staticmethod
-    def _row_values(ent: ResourceEntry) -> tuple[str, str, str]:
-        return ent.rel_name, ent.type_label, format_size(ent.size)
+    def _row_label(ent: ResourceEntry) -> str:
+        path = ent.rel_name
+        if len(path) > 52:
+            path = path[:50] + "…"
+        type_col = ent.type_label
+        if len(type_col) > 14:
+            type_col = type_col[:12] + "…"
+        return f"{path:<54}  {type_col:<14}  {format_size(ent.size):>10}"
 
     def _build_thumb_view(self, parent: ttk.Frame) -> None:
         self._thumb_scroll = VerticalScrollArea(
@@ -234,16 +278,27 @@ class BrowserPanel(BasePanel):
 
     def _build_preview_pane(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="预览", style="Subtitle.TLabel").pack(anchor=tk.W)
-        self._preview_image = tk.Label(
+        self._preview_image_frame = tk.Frame(
             parent,
-            text="选择文件后点「预览」或双击",
-            anchor=tk.CENTER,
             bg=BG_CARD,
-            fg=FG_SECONDARY,
-            padx=8,
-            pady=24,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=BORDER,
         )
-        self._preview_image.pack(fill=tk.X, pady=6)
+        self._preview_image_frame.pack(fill=tk.X, pady=6)
+        self._preview_image = tk.Label(
+            self._preview_image_frame,
+            text=_PREVIEW_PLACEHOLDER,
+            anchor=tk.CENTER,
+            justify=tk.CENTER,
+            bg=BG_CARD,
+            fg=FG,
+            font=ui_font(11),
+            padx=12,
+            pady=28,
+            wraplength=380,
+        )
+        self._preview_image.pack(fill=tk.BOTH, expand=True)
         text_box = ttk.Frame(parent)
         text_box.pack(fill=tk.BOTH, expand=True)
         self._preview_text = tk.Text(
@@ -267,7 +322,6 @@ class BrowserPanel(BasePanel):
 
     def _bind_keys(self, widget: tk.Misc) -> None:
         widget.bind("<F5>", self._on_f5)
-        widget.bind("<Return>", lambda _e: self._preview_selected())
 
     def _debounced_refresh(self, _event: tk.Event | None = None) -> None:
         if self._search_after:
@@ -326,9 +380,73 @@ class BrowserPanel(BasePanel):
             self._thumb_last_first_row = -1
             self.after_idle(self._thumb_sync_viewport)
         else:
+            self._thumb_gen += 1
+            self._thumb_loading.clear()
             self._thumb_frame.pack_forget()
             self._list_frame.pack(fill=tk.BOTH, expand=True)
             self._thumb_scroll.set_fixed_scroll_height(None)
+            self._ensure_list_displayed()
+
+    def _ensure_list_displayed(self) -> None:
+        if self._scan_running or self._list_populating or not self._entries:
+            return
+        target = min(len(self._entries), _MAX_LIST_DISPLAY)
+        if self._list.size() >= target:
+            return
+        total = len(self._entries)
+        show_n = target
+        scan_id = self._scan_id
+        self._status.configure(text=f"正在恢复列表… 0/{show_n}")
+        self._list_populating = True
+        self._set_list_loading(f"正在加载列表… 0/{show_n}")
+        entries = self._entries
+
+        def work() -> None:
+            labels = [self._row_label(e) for e in entries[:show_n]]
+            self._safe_after(
+                0, lambda: self._begin_list_render(labels, scan_id, total, show_n)
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _set_list_loading(self, text: str) -> None:
+        if text:
+            self._list_loading.configure(text=text)
+            self._list_loading.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+        else:
+            self._list_loading.place_forget()
+
+    def _clear_list_async(self, scan_id: int, done: Any) -> None:
+        size = self._list.size()
+
+        def finish() -> None:
+            if scan_id != self._scan_id:
+                return
+            self._list_populating = False
+            self._set_list_loading("")
+            done()
+
+        if size <= 0:
+            finish()
+            return
+        if size <= _LIST_CLEAR_CHUNK:
+            self._list.delete(0, tk.END)
+            finish()
+            return
+        self._list_populating = True
+        self._set_list_loading("正在清空旧列表…")
+
+        def step() -> None:
+            if scan_id != self._scan_id:
+                return
+            if self._list.size() <= 0:
+                finish()
+                return
+            start = max(0, self._list.size() - _LIST_CLEAR_CHUNK)
+            self._list.delete(start, tk.END)
+            self.after(1, step)
+
+        step()
 
     def _refresh(self) -> None:
         root = self._root_row.get().strip()
@@ -353,13 +471,23 @@ class BrowserPanel(BasePanel):
         self._thumb_image_indices.clear()
         self._thumb_last_first_row = -1
         self._thumb_scroll.set_fixed_scroll_height(None)
-        self._clear_tree()
-        self._status.configure(text="扫描中…（发现资源后会立即显示）")
+        self._tree_rendered_count = 0
+        self._tree_render_active = False
+        self._row_labels.clear()
+        self._list_populating = False
+        self._set_list_loading("")
+        self._status.configure(text="扫描中…（后台进行，可切换其他面板）")
 
         cat = self._category.get() or CATEGORY_ALL
         query = self._search_var.get()
         recursive = self._recursive.get()
-        self._start_scan_worker(scan_id, root_path, cat, query, recursive)
+
+        def start_scan() -> None:
+            if scan_id != self._scan_id:
+                return
+            self._start_scan_worker(scan_id, root_path, cat, query, recursive)
+
+        self._clear_list_async(scan_id, start_scan)
 
     def _start_scan_worker(
         self,
@@ -373,7 +501,7 @@ class BrowserPanel(BasePanel):
             return
 
         def work() -> None:
-            batch: list[ResourceEntry] = []
+            collected: list[ResourceEntry] = []
             total = 0
             try:
                 for ent in iter_directory_entries(
@@ -381,23 +509,29 @@ class BrowserPanel(BasePanel):
                 ):
                     if scan_id != self._scan_id:
                         return
-                    batch.append(ent)
+                    collected.append(ent)
                     total += 1
-                    if len(batch) >= _SCAN_BATCH:
-                        chunk = batch
-                        batch = []
+                    if total % _SCAN_PROGRESS_EVERY == 0:
                         n = total
                         self._safe_after(
-                            0, lambda c=chunk, n=n, sid=scan_id: self._append_scan_batch(c, n, sid)
+                            0, lambda n=n, sid=scan_id: self._scan_progress(n, sid)
                         )
                 if scan_id != self._scan_id:
                     return
-                tail = batch
-                self._safe_after(0, lambda sid=scan_id, t=tail: self._finish_scan(t, sid))
+                collected.sort(key=lambda e: (e.category, e.rel_name.lower()))
+                result = collected
+                self._safe_after(
+                    0, lambda e=result, sid=scan_id: self._finish_scan_with_entries(e, sid)
+                )
             except Exception as exc:
                 self._safe_after(0, lambda sid=scan_id, err=exc: self._scan_failed(sid, err))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _scan_progress(self, total: int, scan_id: int) -> None:
+        if scan_id != self._scan_id:
+            return
+        self._status.configure(text=f"扫描中… 已发现 {total} 个文件")
 
     def _safe_after(self, delay_ms: int, callback: Any) -> None:
         try:
@@ -410,55 +544,129 @@ class BrowserPanel(BasePanel):
         if scan_id != self._scan_id:
             return
         self._scan_running = False
+        self._list_populating = False
+        self._set_list_loading("")
         self._status.configure(text=f"扫描失败：{exc}")
 
-    def _append_scan_batch(self, batch: list[ResourceEntry], total: int, scan_id: int) -> None:
+    def _finish_scan_with_entries(self, entries: list[ResourceEntry], scan_id: int) -> None:
         if scan_id != self._scan_id:
             return
-        start = len(self._entries)
-        self._entries.extend(batch)
-        self._append_tree_rows(start, batch)
-        if self._view_mode.get() == "thumb" and self._category.get() in (
-            CATEGORY_ALL,
-            CATEGORY_IMAGE,
-        ):
-            self._prepare_thumb_indices()
-            self._thumb_last_first_row = -1
-            self.after_idle(self._thumb_sync_viewport)
-        self._status.configure(text=f"扫描中… 已发现 {total} 个文件")
-
-    def _finish_scan(self, tail: list[ResourceEntry], scan_id: int) -> None:
-        if scan_id != self._scan_id:
-            return
-        if tail:
-            self._append_scan_batch(tail, len(self._entries) + len(tail), scan_id)
-        self._finish_list_populate(scan_id)
-
-    def _clear_tree(self) -> None:
-        children = self._list.get_children("")
-        if children:
-            self._list.delete(*children)
-
-    def _append_tree_rows(self, start: int, entries: list[ResourceEntry]) -> None:
-        if not entries:
-            return
-        for offset, ent in enumerate(entries):
-            index = start + offset
-            self._list.insert(
-                "",
-                tk.END,
-                iid=self._tree_iid(index),
-                values=self._row_values(ent),
+        self._entries = entries
+        self._scan_running = False
+        self._tree_rendered_count = 0
+        self._tree_render_active = False
+        self._row_labels.clear()
+        if not self._entries:
+            self._set_list_loading("")
+            self._status.configure(
+                text="未找到匹配的文件；请换目录、取消分类筛选或清空搜索后重试"
             )
+            return
+        total = len(self._entries)
+        show_n = min(total, _MAX_LIST_DISPLAY)
+        self._status.configure(text=f"扫描完成 {total} 个，正在准备列表…")
+        self._list_populating = True
+        self._set_list_loading(f"正在加载列表… 0/{show_n}")
 
-    def _finish_list_populate(self, scan_id: int) -> None:
+        def work() -> None:
+            labels = [self._row_label(e) for e in entries[:show_n]]
+            self._safe_after(0, lambda: self._begin_list_render(labels, scan_id, total, show_n))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _begin_list_render(
+        self,
+        labels: list[str],
+        scan_id: int,
+        total: int,
+        show_n: int,
+    ) -> None:
+        if scan_id != self._scan_id:
+            return
+        self._row_labels = labels
+        self._tree_rendered_count = 0
+        self._tree_render_active = False
+        capped = total > show_n
+        if capped:
+            self._status.configure(
+                text=f"共 {total} 个，列表显示前 {show_n} 条，请用搜索或分类缩小"
+            )
+        else:
+            self._status.configure(text=f"正在显示… 0/{show_n}")
+        self._schedule_tree_render(scan_id, total=total, show_n=show_n, capped=capped)
+
+    def _schedule_tree_render(
+        self,
+        scan_id: int,
+        *,
+        total: int | None = None,
+        show_n: int | None = None,
+        capped: bool = False,
+    ) -> None:
+        if scan_id != self._scan_id or self._tree_render_active:
+            return
+        target = show_n if show_n is not None else len(self._row_labels)
+        if self._tree_rendered_count >= target:
+            self._finish_list_populate(scan_id, total=total or len(self._entries), capped=capped)
+            return
+        self._tree_render_active = True
+        self.after(
+            _RENDER_INTERVAL_MS,
+            lambda sid=scan_id, t=total, n=show_n, c=capped: self._render_tree_chunk(
+                sid, total=t, show_n=n, capped=c
+            ),
+        )
+
+    def _render_tree_chunk(
+        self,
+        scan_id: int,
+        *,
+        total: int | None = None,
+        show_n: int | None = None,
+        capped: bool = False,
+    ) -> None:
+        try:
+            if scan_id != self._scan_id:
+                return
+            target = show_n if show_n is not None else len(self._row_labels)
+            start = self._tree_rendered_count
+            end = min(start + _TREE_UI_CHUNK, target)
+            if start < end:
+                self._list.insert(tk.END, *self._row_labels[start:end])
+                self._tree_rendered_count = end
+                if end == target or end % 48 == 0:
+                    self._set_list_loading(f"正在加载列表… {self._tree_rendered_count}/{target}")
+                    if not capped:
+                        self._status.configure(
+                            text=f"正在显示… {self._tree_rendered_count}/{target}"
+                        )
+            if self._tree_rendered_count < target:
+                self.after(
+                    _RENDER_INTERVAL_MS,
+                    lambda sid=scan_id, t=total, n=show_n, c=capped: self._render_tree_chunk(
+                        sid, total=t, show_n=n, capped=c
+                    ),
+                )
+                return
+            self._finish_list_populate(scan_id, total=total or len(self._entries), capped=capped)
+        finally:
+            if scan_id == self._scan_id:
+                self._tree_render_active = False
+                target = show_n if show_n is not None else len(self._row_labels)
+                if self._tree_rendered_count >= target:
+                    self._list_populating = False
+                    self._set_list_loading("")
+
+    def _finish_list_populate(self, scan_id: int, *, total: int, capped: bool = False) -> None:
         if scan_id != self._scan_id:
             return
         self._scan_running = False
-        capped = len(self._entries) >= 8000
-        msg = f"共 {len(self._entries)} 个文件（按扫描顺序显示，大小在选中后显示）"
         if capped:
-            msg += "；已达上限，请用搜索或分类缩小范围"
+            msg = f"共 {total} 个文件；列表显示前 {_MAX_LIST_DISPLAY} 条，请用搜索或分类缩小"
+        else:
+            msg = f"共 {total} 个文件（大小在选中后显示）"
+        if total >= 8000:
+            msg += "；已达扫描上限，请缩小目录或关闭子文件夹"
         self._status.configure(text=msg)
         if self._view_mode.get() == "thumb" and self._category.get() in (
             CATEGORY_ALL,
@@ -530,7 +738,7 @@ class BrowserPanel(BasePanel):
                     img_lbl = tk.Label(cell, image=self._thumb_photos[ent_idx], bg=BG_CARD)
                 else:
                     img_lbl = tk.Label(
-                        cell, text="加载中…", width=12, anchor=tk.CENTER, bg=BG_CARD, fg=FG_SECONDARY
+                        cell, text="加载中…", width=12, anchor=tk.CENTER, bg=BG_CARD, fg=FG
                     )
                     self._queue_thumb_load(ent_idx, img_lbl)
                 img_lbl.pack()
@@ -586,7 +794,7 @@ class BrowserPanel(BasePanel):
             return
         if img is None:
             if label.winfo_exists():
-                label.configure(text="无预览", fg=FG_SECONDARY)
+                label.configure(text="无预览", fg=FG)
             return
         try:
             from PIL import ImageTk
@@ -601,86 +809,154 @@ class BrowserPanel(BasePanel):
                 label.configure(image=photo, text="", bg=BG_CARD)
         except Exception:
             if label.winfo_exists():
-                label.configure(text="无预览", fg=FG_SECONDARY)
+                label.configure(text="无预览", fg=FG)
+
+    def _flash_status(self, text: str) -> None:
+        self._status.configure(text=text)
+
+    def _active_entry(self) -> ResourceEntry | None:
+        """当前应操作的文件：优先已选条目，再解析列表选中。"""
+        if self._selected is not None:
+            for ent in self._entries:
+                if ent.path == self._selected.path:
+                    self._selected = ent
+                    return ent
+        idx = self._resolve_list_index()
+        if idx is not None:
+            self._selected = self._entries[idx]
+            return self._selected
+        return None
+
+    def _same_entry(self, a: ResourceEntry | None, b: ResourceEntry | None) -> bool:
+        return a is not None and b is not None and a.path == b.path
+
+    def _resolve_list_index(self) -> int | None:
+        sel = self._list.curselection()
+        if sel:
+            idx = int(sel[0])
+            if 0 <= idx < len(self._entries):
+                return idx
+        if 0 <= self._last_list_index < len(self._entries):
+            return self._last_list_index
+        if self._list.size() > 0:
+            active = self._list.index(tk.ACTIVE)
+            if 0 <= active < len(self._entries):
+                return active
+        return None
 
     def _on_list_select(self, _event: tk.Event | None = None) -> None:
-        sel = self._list.selection()
+        if self._list_populating or self._scan_running:
+            return
+        sel = self._list.curselection()
         if not sel:
             return
-        self._select_index(self._index_from_iid(sel[0]), preview=False)
-
-    def _index_from_iid(self, iid: str) -> int:
-        try:
-            return int(iid.split(":", 1)[1])
-        except (IndexError, ValueError):
-            return -1
+        self._select_index(int(sel[0]), preview=False)
 
     def _select_index(self, index: int, *, preview: bool = False) -> None:
         if index < 0 or index >= len(self._entries):
             return
+        self._last_list_index = index
         self._selected = self._entries[index]
-        iid = self._tree_iid(index)
-        if self._list.exists(iid):
-            self._list.selection_set(iid)
-            self._list.focus(iid)
-            self._list.see(iid)
+        # 勿在此处 selection_clear：大列表上会触发额外事件并卡顿
+        if self._list.curselection() != (index,):
+            for sel in self._list.curselection():
+                if sel != index:
+                    self._list.selection_clear(sel)
+            self._list.selection_set(index)
+        self._list.activate(index)
+        self._list.see(index)
         self._show_entry_info(self._selected)
         if preview:
             self._preview_selected()
 
     def _current_entry(self) -> ResourceEntry | None:
-        if self._selected:
-            return self._selected
-        sel = self._list.selection()
-        if sel:
-            index = self._index_from_iid(sel[0])
-            if 0 <= index < len(self._entries):
-                return self._entries[index]
-        return None
+        return self._active_entry()
+
+    def _needs_async_preview(self, ent: ResourceEntry) -> bool:
+        return self._preview_svc.can_preview_image(ent) or self._preview_svc.can_text_preview(
+            ent
+        )
+
+    def _set_preview_placeholder(self, text: str = _PREVIEW_PLACEHOLDER) -> None:
+        self._preview_photo = None
+        self._preview_image.configure(image="")
+        self._preview_image.configure(
+            text=text,
+            bg=BG_CARD,
+            fg=FG,
+            font=ui_font(11),
+        )
 
     def _show_entry_info(self, ent: ResourceEntry) -> None:
         if not ent.size_known:
-            hydrated = hydrate_size(ent)
+            ent = hydrate_size(ent)
             for i, e in enumerate(self._entries):
-                if e.path == hydrated.path:
-                    self._entries[i] = hydrated
-                    ent = hydrated
-                    iid = self._tree_iid(i)
-                    if self._list.exists(iid):
-                        self._list.item(iid, values=self._row_values(hydrated))
+                if e.path == ent.path:
+                    self._entries[i] = ent
                     break
-        self._preview_image.configure(image="", text="")
-        self._preview_photo = None
-        self._preview_image.configure(
-            text="选择文件后点「预览」或双击",
-            bg=BG_CARD,
-            fg=FG_SECONDARY,
-        )
+        self._selected = ent
+        self._set_preview_placeholder()
         self._set_preview_text(self._preview_svc.info_text(ent))
 
     def _preview_selected(self) -> None:
-        ent = self._current_entry()
-        if ent is None:
-            return
-        self._selected = ent
-        self._preview_token += 1
-        token = self._preview_token
-        self._show_entry_info(ent)
-        self._status.configure(text="加载预览…")
+        try:
+            if self._list_populating:
+                self._flash_status("列表正在加载，请稍候…")
+                return
+            if self._scan_running and not self._entries:
+                self._flash_status("列表仍在扫描，请稍候…")
+                self._set_preview_placeholder("正在扫描文件，请稍候…")
+                return
 
-        def work() -> None:
-            image_result: tuple[Any, str] | None = None
-            text_extra = ""
-            try:
-                if self._preview_svc.can_preview_image(ent):
-                    image_result = self._preview_svc.load_preview_image(ent.path)
-                elif self._preview_svc.can_text_preview(ent):
-                    text_extra = "\n\n" + self._preview_svc.text_snippet(ent.path)
-            except Exception as exc:
-                image_result = (None, str(exc))
-            self._safe_after(0, lambda: self._apply_preview(token, ent, image_result, text_extra))
+            ent = self._active_entry()
+            if ent is None:
+                self._flash_status("请先在左侧列表单击一行（选中后会变蓝）")
+                self._set_preview_placeholder("请先在左侧列表单击一行选中文件")
+                self._set_preview_text(
+                    "操作步骤：\n"
+                    "1. 在左侧列表单击一个文件（行变蓝表示已选中）\n"
+                    "2. 再点上方「预览」按钮\n"
+                    "3. G00/图片会显示大图；语音包会显示说明"
+                )
+                return
 
-        threading.Thread(target=work, daemon=True).start()
+            idx = next((i for i, e in enumerate(self._entries) if e.path == ent.path), -1)
+            if idx >= 0:
+                self._last_list_index = idx
+            self._selected = ent
+            if not ent.size_known:
+                self._show_entry_info(ent)
+            elif self._preview_text.get("1.0", tk.END).strip() == "":
+                self._set_preview_text(self._preview_svc.info_text(ent))
+
+            if not self._needs_async_preview(ent):
+                self._set_preview_placeholder("文件信息见下方")
+                self._flash_status(f"已预览：{ent.name}")
+                return
+
+            self._preview_token += 1
+            token = self._preview_token
+            self._set_preview_placeholder("加载预览…")
+            self._flash_status(f"正在加载预览：{ent.name}…")
+
+            def work() -> None:
+                image_result: tuple[Any, str] | None = None
+                text_extra = ""
+                try:
+                    if self._preview_svc.can_preview_image(ent):
+                        image_result = self._preview_svc.load_preview_image(ent.path)
+                    elif self._preview_svc.can_text_preview(ent):
+                        text_extra = "\n\n" + self._preview_svc.text_snippet(ent.path)
+                except Exception as exc:
+                    image_result = (None, str(exc))
+                self._safe_after(
+                    0, lambda: self._apply_preview(token, ent, image_result, text_extra)
+                )
+
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            self._flash_status(f"预览失败：{exc}")
+            self._set_preview_placeholder(f"预览失败：{exc}")
 
     def _apply_preview(
         self,
@@ -689,10 +965,12 @@ class BrowserPanel(BasePanel):
         image_result: tuple[Any, str] | None,
         text_extra: str,
     ) -> None:
-        if token != self._preview_token or self._selected != ent:
+        if token != self._preview_token or not self._same_entry(self._selected, ent):
             return
         if text_extra:
             self._append_preview_text(text_extra)
+            if image_result is None:
+                self._set_preview_placeholder("文本预览见下方")
         if image_result is not None:
             img, err = image_result
             if img is not None:
@@ -700,11 +978,20 @@ class BrowserPanel(BasePanel):
                     from PIL import ImageTk
 
                     self._preview_photo = ImageTk.PhotoImage(img)
-                    self._preview_image.configure(image=self._preview_photo, text="", bg=BG_CARD)
+                    self._preview_image.configure(
+                        image=self._preview_photo,
+                        text="",
+                        bg=BG_CARD,
+                        fg=FG,
+                    )
                 except Exception as exc:
+                    self._set_preview_placeholder(f"图片预览失败：{exc}")
                     self._append_preview_text(f"\n\n图片预览失败：{exc}")
             elif err:
+                self._set_preview_placeholder(str(err))
                 self._append_preview_text(f"\n\n{err}")
+        elif not text_extra:
+            self._set_preview_placeholder("文件信息见下方")
         self._status.configure(text=f"已选：{ent.name}")
 
     def _set_preview_text(self, text: str) -> None:
@@ -719,13 +1006,30 @@ class BrowserPanel(BasePanel):
         self._preview_text.configure(state=tk.DISABLED)
 
     def _play_or_open(self) -> None:
-        ent = self._current_entry()
+        ent = self._active_entry()
         if ent is None:
+            self._flash_status("请先在列表中单击选择一个文件")
             return
         if self._preview_svc.can_play_audio(ent):
-            err = self._preview_svc.play_audio(ent.path)
-            if err:
-                messagebox.showerror("播放", err)
+            self._flash_status(f"准备播放：{ent.name}…")
+
+            def work() -> None:
+                from siglus_ssu.bundled_tools import ensure_ffmpeg_installed, find_ffplay
+
+                if not find_ffplay():
+                    self._safe_after(0, lambda: self._flash_status("正在下载音频组件 ffmpeg…"))
+                    ensure_ffmpeg_installed()
+                err = self._preview_svc.play_audio(ent.path)
+                self._safe_after(
+                    0,
+                    lambda: (
+                        messagebox.showerror("播放", err)
+                        if err
+                        else self._flash_status(f"正在播放：{ent.name}")
+                    ),
+                )
+
+            threading.Thread(target=work, daemon=True).start()
             return
         if self._preview_svc.can_open_video(ent):
             err = self._preview_svc.open_video(ent.path)
@@ -740,6 +1044,7 @@ class BrowserPanel(BasePanel):
     def _open_parent(self) -> None:
         ent = self._current_entry()
         if ent is None:
+            self._flash_status("请先在列表中单击选择一个文件")
             return
         folder = ent.path.parent
         if sys.platform == "win32":
@@ -751,13 +1056,20 @@ class BrowserPanel(BasePanel):
                 subprocess.run(["xdg-open", str(folder)], check=False)
 
     def _jump_panel(self) -> None:
-        ent = self._current_entry()
+        ent = self._active_entry()
         if ent is None:
+            self._flash_status("请先在列表中单击选择一个文件")
             return
         key = panel_for_entry(ent)
-        if not key or self._app is None:
+        if not key:
+            self._flash_status("未找到匹配的功能面板")
             messagebox.showinfo("跳转", "未找到匹配的功能面板。")
             return
+        if self._app is None:
+            self._flash_status("跳转失败：应用未初始化")
+            return
+        label = PANEL_LABELS.get(key, key) if key in PANEL_LABELS else key
+        self._flash_status(f"正在跳转到「{label}」…")
         self._app.jump_to_panel(key, input_path=str(ent.path))
 
     def _build_command(self) -> tuple[list[str], None] | str:

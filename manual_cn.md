@@ -1093,7 +1093,7 @@ siglus-ssu -s --play <input_file.(nwa | owp | ogg) | input_dir> [path_to_Gameexe
 | `--x` | **提取**模式。解码 `.owp` → `.ogg`，`.nwa` → `.wav`，`.ovk` → 单独的 `.ogg` 文件。 |
 | `--a` | **分析**模式。打印单个音频文件的详细结构头部信息。提供两个 `.ovk` 文件时，会按条目编号/出现序号比较 size、sample count 和解密后的 Ogg payload 内容；对于 `z####.ovk` 文件名，还会报告推导出的全局 KOE 标签。 |
 | `--c` | **创建**模式。将 `.ogg` 文件编码为 `.owp`，或将编号的 `.ogg` 文件组合编码为 `.ovk` 文件。目录输入时会递归扫描 `.ogg`，并在输出端保留相对目录结构。 |
-| `--play` | **播放**模式。读取 `Gameexe.dat` 或 `Gameexe.ini` 中的 `#BGM.*` 循环点表，播放单个 `.nwa` / `.owp` / `.ogg` BGM，或播放一个可交互的目录播放列表。Gameexe 路径为可选；省略时会自动探测附近的 `Gameexe.dat`/`Gameexe.ini`。播放界面为整屏终端 UI，带实时进度条和播放列表视图。需要 `ffplay` 在系统 `PATH` 中，且已安装 [psutil](https://pypi.org/project/psutil/)。 |
+| `--play` | **播放**模式。读取 `Gameexe.dat` 或 `Gameexe.ini` 中的 `#BGM.*` 循环点表，播放单个 `.nwa` / `.owp` / `.ogg` BGM，或播放一个可交互的目录播放列表。Gameexe 路径为可选；省略时会自动探测附近的 `Gameexe.dat`/`Gameexe.ini`。播放界面为整屏终端 UI，带实时进度条和播放列表视图。需要 `ffplay`（**GUI 便携版已内置**；CLI 单独使用时需在系统 `PATH` 中），且已安装 [psutil](https://pypi.org/project/psutil/)。 |
 | `--trim <Gameexe.dat \| Gameexe.ini>` | （仅提取模式）从 `Gameexe.dat` 或 `Gameexe.ini` 读取 `#BGM.*` 循环点表，并将 `.owp` 与 `.nwa` BGM 裁剪到其循环区域。`.owp` 裁剪会使用 **ffmpeg** 并输出 `.ogg`；`.nwa` 裁剪会直接截取解码后的 PCM 并输出 `.wav`。`.ovk` 文件不参与裁剪。 |
 | `--angou <path\|angou=text\|key=bytes>` | 读取 Gameexe 来源时使用的加密 `Gameexe.dat` key 来源，例如 `--x --trim` 或 `--play`。使用 [`-a` / `--analyze`](#-a----analyze--分析和比较文件) 中说明的公共 key-source 规则。不读取 Gameexe 来源的 sound 操作也接受该参数，但会忽略它。 |
 

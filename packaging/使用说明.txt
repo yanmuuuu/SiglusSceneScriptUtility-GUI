@@ -1,40 +1,53 @@
-SiglusSceneScriptUtility GUI — 便携版使用说明
-==========================================
-
-【像 FModel 一样使用】
-
-1. 解压整个 SiglusSSU-GUI 文件夹到任意位置（例如桌面）
-2. 双击 SiglusSSU-GUI.exe（或「启动 SiglusSSU-GUI.bat」）
-3. 无需安装 Python、uv 或其他运行环境
-
-【首次使用】
-
-若提示缺少运行时常量，在左侧选择「初始化」，点击「开始执行」。
-需要联网下载 const.py（仅首次或更新时需要）。
-
-【系统要求】
-
-- Windows 10 / 11（64 位推荐）
-- 便携版：无需预装 Python
-- 若从源码运行：需 Python 3.12 或更高（3.11 及以下不支持）
-
-【从开发仓库启动】
-
-- 优先双击 dist\SiglusSSU-GUI\SiglusSSU-GUI.exe（若已运行 scripts\build_portable.bat 打包）
-- 或双击项目根目录「启动 SiglusSSU-GUI.bat」
-  顺序：便携版 → .venv（uv sync 后）→ Python 3.12+
-
-【文件夹说明】
-
-SiglusSSU-GUI.exe     主程序（双击运行）
-_internal\            程序运行所需文件（请勿删除）
-使用说明.txt          本文件
-
-【注意】
-
-- 请保持文件夹结构完整，不要只复制 exe 文件
-- 可将整个文件夹固定到任务栏：右键 exe → 固定到任务栏
-- 详细功能说明见项目 instructions.md（开发者文档）
-
-上游 CLI：SiglusSceneScriptUtility by Jirehlov
-https://github.com/Jirehlov/SiglusSceneScriptUtility
+SiglusSceneScriptUtility GUI — 便携版使用说明
+==========================================
+
+【像 FModel 一样使用 — 一次下载，双击即用】
+
+方式 A（推荐）：双击仓库或发布包中的「下载 SiglusSSU-GUI.bat」
+  → 自动下载到桌面 → 解压 → 创建桌面快捷方式 → 可选立即启动
+
+方式 B：手动解压
+  1. 下载 SiglusSSU-GUI-portable.zip（GitHub Releases）
+  2. 解压整个 SiglusSSU-GUI 文件夹到桌面（或任意位置）
+  3. 双击 SiglusSSU-GUI.exe（或「启动 SiglusSSU-GUI.bat」）
+
+无需安装 Python、uv、ffmpeg 或其它运行环境。
+
+【首次使用】
+
+若提示缺少运行时常量，在左侧选择「初始化」，点击「开始执行」。
+需要联网下载 const.py（仅首次或更新时需要）。
+
+【系统要求】
+
+- Windows 10 / 11（64 位推荐）
+- 便携版：无需预装 Python / ffmpeg
+- 若从源码运行：需 Python 3.12 或更高（3.11 及以下不支持）
+
+【文件夹说明】
+
+SiglusSSU-GUI.exe     主程序（双击运行）
+启动 SiglusSSU-GUI.bat  启动脚本（与 exe 等效）
+ffmpeg\               内置音频播放（ffplay/ffmpeg，请勿删除）
+_internal\            程序运行所需文件（请勿删除）
+使用说明.txt          本文件
+
+【资源浏览 · 音频试听】
+
+便携版已内置 ffplay，在「资源浏览」选中 .ogg / .owp / .nwa 后点「播放/打开」即可试听。
+若提示找不到 ffplay，请确认 ffmpeg 文件夹与 exe 在同一目录且完整。
+
+【从开发仓库启动】
+
+- 优先双击 dist\SiglusSSU-GUI\SiglusSSU-GUI.exe（若已运行 scripts\build_portable.bat 打包）
+- 或双击项目根目录「启动 SiglusSSU-GUI.bat」
+  顺序：便携版 → .venv（uv sync 后）→ Python 3.12+
+
+【注意】
+
+- 请保持文件夹结构完整，不要只复制 exe 文件
+- 可将整个文件夹固定到任务栏：右键 exe → 固定到任务栏
+- 详细功能说明见项目 instructions.md
+
+上游 CLI：SiglusSceneScriptUtility by Jirehlov
+https://github.com/Jirehlov/SiglusSceneScriptUtility

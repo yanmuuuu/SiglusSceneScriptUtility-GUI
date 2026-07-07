@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -10,6 +11,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from siglus_ssu.bundled_tools import augment_path_env, find_ffplay
+
 from .resource_catalog import CATEGORY_IMAGE, ResourceEntry, format_size
 
 _PREVIEWABLE_IMAGE = {".g00", ".g01", ".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"}
@@ -17,6 +20,20 @@ _PREVIEWABLE_AUDIO = {".ogg", ".wav", ".owp", ".nwa", ".mp3"}
 _TEXT_PREVIEW = {".ss", ".ini", ".inc", ".csv", ".txt", ".json", ".dat"}
 _VIDEO_EXT = {".omv", ".ogv", ".mp4", ".webm"}
 _TEXT_PREVIEW_BYTES = 256 * 1024
+_TK_IMAGE_BG = (38, 38, 44)  # BG_CARD #26262c
+
+
+def _image_for_tk(img):
+    """将 PIL 图转为 Tk 可显示格式（RGBA 合成到深色底，避免白屏）。"""
+    from PIL import Image
+
+    if img.mode == "RGBA":
+        base = Image.new("RGB", img.size, _TK_IMAGE_BG)
+        base.paste(img, mask=img.split()[3])
+        return base
+    if img.mode != "RGB":
+        return img.convert("RGB")
+    return img
 
 
 class PreviewService:
@@ -24,7 +41,8 @@ class PreviewService:
         self._audio_proc: subprocess.Popen[bytes] | None = None
         self._temp_dirs: list[str] = []
         self._g00_scratch: str | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._g00_lock = threading.Lock()
 
     def cleanup(self) -> None:
         self.stop_audio()
@@ -117,20 +135,15 @@ class PreviewService:
             return None
         try:
             if path.suffix.lower() in {".g00", ".g01"}:
-                png = self._g00_first_png(path)
-                if png is None:
+                img = self._load_g00_image(path)
+                if img is None:
                     return None
-                try:
-                    img = Image.open(png)
-                    img.load()
-                finally:
-                    self._release_g00_work(png)
             else:
                 img = Image.open(path)
             img.thumbnail((size, size), Image.Resampling.LANCZOS)
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGBA")
-            return img
+            return _image_for_tk(img)
         except Exception:
             return None
 
@@ -141,50 +154,102 @@ class PreviewService:
             return None, "需要 Pillow 才能预览图片。请使用源码环境 uv sync 或更新便携版。"
         try:
             if path.suffix.lower() in {".g00", ".g01"}:
-                png = self._g00_first_png(path)
-                if png is None:
-                    return None, "无法从 G00 解出预览图。"
-                try:
-                    img = Image.open(png)
-                    img.load()
-                finally:
-                    self._release_g00_work(png)
+                img = self._load_g00_image(path)
+                if img is None:
+                    return None, "无法从 G00 解出预览图（格式不支持或文件损坏）。"
             else:
                 img = Image.open(path)
             img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGBA")
-            return img, ""
+            return _image_for_tk(img), ""
         except Exception as exc:
             return None, str(exc)
 
-    def _g00_first_png(self, path: Path) -> Path | None:
+    def _load_g00_image(self, path: Path):
+        """解压 G00 并返回 PIL 图（Type2 多切片会合成到画布）。"""
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+        work = self._g00_extract_work(path)
+        if work is None:
+            return None
+        try:
+            stem = path.stem
+            layout_path = work / f"{stem}.type2.json"
+            if layout_path.is_file():
+                img = self._compose_type2_preview(work, layout_path)
+                if img is not None:
+                    return img
+            pngs = sorted(work.glob("*.png"))
+            if not pngs:
+                return None
+            img = Image.open(pngs[0])
+            img.load()
+            return img
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    @staticmethod
+    def _compose_type2_preview(work: Path, layout_path: Path):
+        import json
+
+        from PIL import Image
+
+        try:
+            data = json.loads(layout_path.read_text(encoding="utf-8"))
+            canvas = data.get("canvas") or {}
+            cw = int(canvas.get("width", 0))
+            ch = int(canvas.get("height", 0))
+            if cw <= 0 or ch <= 0:
+                return None
+            base = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+            for cut in data.get("cuts") or []:
+                if not isinstance(cut, dict):
+                    continue
+                src_name = cut.get("source")
+                if not src_name:
+                    continue
+                src = work / str(src_name)
+                if not src.is_file():
+                    continue
+                piece = Image.open(src).convert("RGBA")
+                rect = cut.get("canvas_rect") or {}
+                x0 = int(rect.get("x0", 0))
+                y0 = int(rect.get("y0", 0))
+                base.paste(piece, (x0, y0), piece)
+            return base
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+            return None
+
+    def _g00_extract_work(self, path: Path) -> Path | None:
         with self._lock:
             if self._g00_scratch is None:
                 self._g00_scratch = tempfile.mkdtemp(prefix="ssu_g00_scratch_")
-                self._remember_temp(self._g00_scratch)
+                self._temp_dirs.append(self._g00_scratch)
             scratch = Path(self._g00_scratch)
-        work = scratch / path.name
+        work = self._g00_work_dir(scratch, path)
         if work.exists():
             shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True, exist_ok=True)
         try:
             from siglus_ssu import g00
 
-            g00.extract_one(str(path), str(work))
+            with self._g00_lock:
+                g00.extract_one(str(path), str(work))
         except Exception:
             shutil.rmtree(work, ignore_errors=True)
             return None
-        pngs = sorted(work.glob("*.png"))
-        if not pngs:
+        if not any(work.glob("*.png")):
             shutil.rmtree(work, ignore_errors=True)
             return None
-        return pngs[0]
+        return work
 
-    def _release_g00_work(self, png: Path) -> None:
-        work = png.parent
-        if self._g00_scratch and str(work).startswith(self._g00_scratch):
-            shutil.rmtree(work, ignore_errors=True)
+    def _g00_work_dir(self, scratch: Path, path: Path) -> Path:
+        """按完整路径区分临时目录，避免同名 G00 互相覆盖导致预览失败。"""
+        key = hashlib.sha1(str(path.resolve()).encode("utf-8", errors="replace")).hexdigest()[:16]
+        return scratch / key
 
     def play_audio(self, path: Path) -> str | None:
         """启动试听；返回错误信息或 None。"""
@@ -216,7 +281,7 @@ class PreviewService:
         elif ext == ".ovk":
             return "OVK 为语音归档，请先用「音频」提取或选包内 .ogg 试听。"
 
-        ffplay = shutil.which("ffplay")
+        ffplay = find_ffplay()
         if ffplay:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             try:
@@ -226,6 +291,7 @@ class PreviewService:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     creationflags=creationflags,
+                    env=augment_path_env(),
                 )
                 return None
             except OSError as exc:
@@ -240,7 +306,10 @@ class PreviewService:
             except Exception as exc:
                 return str(exc)
 
-        return "未找到 ffplay。请安装 ffmpeg 并将 ffplay 加入 PATH。"
+        return (
+            "未找到 ffplay。便携版应自带 ffmpeg 文件夹；"
+            "若从源码运行，请执行 scripts/fetch_ffmpeg.py 或安装 ffmpeg 并加入 PATH。"
+        )
 
     def open_video(self, path: Path) -> str | None:
         ext = path.suffix.lower()

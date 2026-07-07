@@ -8,6 +8,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from siglus_ssu.bundled_tools import augment_path_env
+
 from .process_util import kill_process_tree, popen_group_kwargs
 
 _CLI_FLAG = "--ssu-cli"
@@ -22,10 +24,10 @@ def _src_root() -> Path:
 
 
 def _cli_subprocess_env() -> dict[str, str] | None:
-    """源码启动时把 src 传给子进程，避免 `python -m siglus_ssu` 找不到模块。"""
+    """源码启动时把 src 传给子进程；便携版注入内置 ffmpeg PATH。"""
     if is_frozen():
-        return None
-    env = os.environ.copy()
+        return augment_path_env()
+    env = augment_path_env()
     src = str(_src_root())
     prev = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = src if not prev else f"{src}{os.pathsep}{prev}"

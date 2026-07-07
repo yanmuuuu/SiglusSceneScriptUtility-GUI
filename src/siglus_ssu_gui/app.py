@@ -44,6 +44,8 @@ class MainApp(tk.Tk):
         self._build_ui()
         self._show_panel(PANEL_ORDER[0])
         self.after(200, self._check_const)
+        if sys.platform == "win32":
+            self.after(500, self._prefetch_ffmpeg)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<Control-Return>", lambda _e: self._run())
         self.bind("<Control-l>", lambda _e: self._log.clear())
@@ -150,26 +152,64 @@ class MainApp(tk.Tk):
 
     def jump_to_panel(self, key: str, *, input_path: str | None = None) -> None:
         if key not in self._panel_classes and key != "browser":
+            self._status.configure(text=f"无法跳转：未知面板 {key}")
             return
         self._show_panel(key)
         if not input_path:
             return
         panel = self._ensure_panel(key)
+        path = Path(input_path)
+        self._prepare_panel_for_jump(panel, key, path)
         for attr in ("input_row", "exe_row", "scene_row", "engine_row", "_root_row", "in1"):
             row = getattr(panel, attr, None)
             if row is not None and hasattr(row, "set"):
                 row.set(input_path)
                 break
+        label = PANEL_LABELS.get(key, key)
+        self._status.configure(text=f"已跳转到「{label}」，路径已填入")
+
+    def _prepare_panel_for_jump(self, panel: BasePanel, key: str, path: Path) -> None:
+        op = getattr(panel, "op", None)
+        if op is None or not hasattr(op, "set"):
+            return
+        ext = path.suffix.lower()
+        if key == "g00" and ext in {".g00", ".g01"}:
+            op.set("提取 --x")
+            if hasattr(panel, "_on_op"):
+                panel._on_op()
+        elif key == "sound" and ext in {".ovk", ".owp", ".nwa", ".ogg", ".wav", ".mp3"}:
+            op.set("提取 --x")
+            if hasattr(panel, "_on_op"):
+                panel._on_op()
+        elif key == "video" and ext in {".omv", ".ogv"}:
+            op.set("提取 --x")
+            if hasattr(panel, "_on_op"):
+                panel._on_op()
+        elif key == "extract" and ext == ".pck":
+            op.set("提取 --x")
+            if hasattr(panel, "_on_op"):
+                panel._on_op()
 
     def _show_panel(self, key: str) -> None:
         if self._current_key == "browser" and key != "browser":
             old = self._panels.get("browser")
             if old is not None and hasattr(old, "on_hide"):
                 old.on_hide()
+        prev_key = self._current_key
         self._current_key = key
         for k, item in self._nav_buttons.items():
             item.set_selected(k == key)
-        panel = self._ensure_panel(key)
+        try:
+            panel = self._ensure_panel(key)
+        except Exception as exc:
+            self._current_key = prev_key
+            for k, item in self._nav_buttons.items():
+                item.set_selected(k == prev_key)
+            messagebox.showerror(
+                "面板加载失败",
+                f"无法打开「{PANEL_LABELS.get(key, key)}」：\n\n{exc}",
+            )
+            return
         for k, p in self._panels.items():
             if k == key:
                 p.pack(fill=tk.BOTH, expand=True)
@@ -355,6 +395,20 @@ class MainApp(tk.Tk):
             return
         self._cleanup_processes()
         self.destroy()
+
+    def _prefetch_ffmpeg(self) -> None:
+        """便携版缺少 ffmpeg 时在后台预下载，避免首次试听长时间等待。"""
+        if not getattr(sys, "frozen", False):
+            return
+
+        def work() -> None:
+            from siglus_ssu.bundled_tools import ensure_ffmpeg_installed, find_ffplay
+
+            if find_ffplay():
+                return
+            ensure_ffmpeg_installed()
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _check_const(self) -> None:
         if const_available():

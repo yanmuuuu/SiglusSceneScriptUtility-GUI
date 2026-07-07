@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "siglus-ssu-gui"
-version = "0.2.1"
+version = "1.0.0"
 description = "SiglusEngine SceneScript Utility — GUI wrapper around siglus-ssu (upstream CLI bundled)."
 readme = "README.md"
 requires-python = ">=3.12"

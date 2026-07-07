@@ -109,7 +109,6 @@ def make_listbox(parent: tk.Misc, **kwargs: Any) -> tk.Listbox:
         "relief": tk.FLAT,
         "font": ui_font(10),
         "exportselection": False,
-        "insertbackground": LIST_FG,
     }
     opts.update(kwargs)
     lb = tk.Listbox(parent, **opts)
@@ -411,6 +410,32 @@ def apply_theme(root: tk.Tk) -> ttk.Style:
         "Treeview",
         background=[("selected", SELECT_BG), ("!selected", BG_CARD)],
         foreground=[("selected", FG), ("!selected", FG)],
+    )
+    # 资源浏览列表：强制黑底白字（Windows 默认 Treeview 正文区常为白底）
+    style.configure(
+        "Browser.Treeview",
+        background=LIST_BG,
+        foreground=LIST_FG,
+        fieldbackground=LIST_BG,
+        bordercolor=BORDER,
+        lightcolor=LIST_BG,
+        darkcolor=LIST_BG,
+        rowheight=26,
+        font=ui_font(_BASE_SIZE),
+    )
+    style.configure(
+        "Browser.Treeview.Heading",
+        background=LIST_HEADER_BG,
+        foreground=LIST_HEADER_FG,
+        bordercolor=BORDER,
+        relief=tk.FLAT,
+        font=ui_font(_BASE_SIZE, bold=True),
+    )
+    style.map(
+        "Browser.Treeview",
+        background=[("selected", SELECT_BG), ("!selected", LIST_BG)],
+        foreground=[("selected", LIST_FG), ("!selected", LIST_FG)],
+        fieldbackground=[("selected", SELECT_BG), ("!selected", LIST_BG)],
     )
     style.configure("Panel.TFrame", background=BG_PANEL)
     style.configure(
